@@ -1,0 +1,24 @@
+{
+  "project_name": "time_api",
+  "description": "Een simpele REST API die de huidige tijd teruggeeft in JSON formaat",
+  "structure": [
+    "src/main.py",
+    "src/time_service.py",
+    "tests/test_main.py",
+    "tests/test_time_service.py"
+  ],
+  "tests": [
+    "test dat de /time endpoint een 200 status code teruggeeft",
+    "test dat de response een geldig ISO 8601 tijdformaat bevat",
+    "test dat de time_service functie een datetime object teruggeeft",
+    "test dat de root endpoint een welkomstbericht teruggeeft",
+    "test dat de API JSON content-type teruggeeft"
+  ],
+  "requirements": [
+    "fastapi",
+    "uvicorn",
+    "pytest",
+    "httpx"
+  ],
+  "docker_port": 8000
+}
