@@ -15,7 +15,6 @@ class BuilderAgent:
             import shutil
             archive_dir = project_path / "_attempts" / f"attempt_{attempt - 1}"
             archive_dir.parent.mkdir(parents=True, exist_ok=True)
-            # Kopieer alle huidige bestanden behalve de _attempts map zelf
             for item in project_path.iterdir():
                 if item.name == "_attempts":
                     continue
@@ -29,7 +28,11 @@ class BuilderAgent:
         written = []
 
         # 1. Schrijf alle bestanden van de developer
+        # MAAR: skip Dockerfile, docker-compose.yml, README.md - die maakt Builder zelf
+        builder_owned = {"Dockerfile", "docker-compose.yml", "README.md"}
         for f in dev_result["files"]:
+            if Path(f["path"]).name in builder_owned:
+                continue  # negeer wat de Developer zou hebben gemaakt
             file_path = project_path / f["path"]
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f["content"])
@@ -37,7 +40,7 @@ class BuilderAgent:
 
         # 2. Voeg __init__.py toe in elke Python package map
         for sub_dir in project_path.rglob("*"):
-            if sub_dir.is_dir() and sub_dir.name not in ["__pycache__", ".git"]:
+            if sub_dir.is_dir() and sub_dir.name not in ["__pycache__", ".git", "_attempts"]:
                 py_files = list(sub_dir.glob("*.py"))
                 init_file = sub_dir / "__init__.py"
                 if py_files and not init_file.exists():
@@ -49,20 +52,15 @@ class BuilderAgent:
         existing_reqs = []
         if req_path.exists():
             existing_reqs = [line.strip() for line in req_path.read_text().splitlines() if line.strip()]
-        
+
         plan_reqs = plan.get("requirements", [])
-        
-        # Test dependencies altijd toevoegen
-        guaranteed_test_deps = ["pytest", "httpx"]  # httpx voor FastAPI tests
-        
-        # Combineer alles, dedupe
+        guaranteed_test_deps = ["pytest", "httpx"]
+
         all_reqs = list(existing_reqs) + list(plan_reqs)
         for dep in guaranteed_test_deps:
-            # Check of de dep al in een vorm aanwezig is (bv "pytest" of "pytest>=7")
             if not any(r.split("==")[0].split(">=")[0].split("<=")[0].strip() == dep for r in all_reqs):
                 all_reqs.append(dep)
-        
-        # Schrijf gededupliceerde lijst
+
         seen = set()
         final_reqs = []
         for r in all_reqs:
@@ -70,11 +68,11 @@ class BuilderAgent:
             if key and key not in seen:
                 seen.add(key)
                 final_reqs.append(r)
-        
+
         req_path.write_text("\n".join(final_reqs) + "\n")
         written.append(str(req_path))
 
-        # 4. .env.example en lege .env (zodat docker-compose niet faalt)
+        # 4. .env.example en lege .env
         env_example = project_path / ".env.example"
         env_example.write_text("# Vul in en hernoem naar .env\n# Geen echte secrets committen!\n")
         written.append(str(env_example))
@@ -84,32 +82,24 @@ class BuilderAgent:
             env_real.write_text("# Lokale env vars - niet committen\n")
             written.append(str(env_real))
 
-        # 5. docker-compose.yml - alleen voor web apps
-        # We detecteren web apps later, dus eerst Dockerfile-stap doen
-        # Deze stap wordt verplaatst naar na de Dockerfile detectie
-        compose_path = project_path / "docker-compose.yml"
-        compose_pending = not compose_path.exists() 
+        # 5. Dockerfile - Builder genereert ALTIJD zijn eigen versie
+        port = plan.get("docker_port", 8000)
+        main_py = project_path / "src" / "main.py"
+        entry_cmd = '["python", "-m", "src.main"]'
+        is_web_app = False
 
+        if main_py.exists():
+            content = main_py.read_text().lower()
+            if "fastapi" in content:
+                entry_cmd = f'["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]'
+                is_web_app = True
+            elif "flask" in content and "app.run" in content:
+                entry_cmd = '["python", "-m", "src.main"]'
+                is_web_app = True
 
-        # 6. Dockerfile met PYTHONPATH zodat src.* imports werken
+        expose_line = f"EXPOSE {port}\n" if is_web_app else ""
         dockerfile = project_path / "Dockerfile"
-        if not dockerfile.exists():
-            port = plan.get("docker_port", 8000)
-            main_py = project_path / "src" / "main.py"
-            entry_cmd = '["python", "-m", "src.main"]'  # default: -m flag laat src/ als package werken
-            is_web_app = False
-
-            if main_py.exists():
-                content = main_py.read_text().lower()
-                if "fastapi" in content:
-                    entry_cmd = f'["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]'
-                    is_web_app = True
-                elif "flask" in content:
-                    entry_cmd = '["python", "-m", "src.main"]'
-                    is_web_app = True
-
-            expose_line = f"EXPOSE {port}\n" if is_web_app else ""
-            dockerfile_content = f"""FROM python:3.11-slim
+        dockerfile_content = f"""FROM python:3.11-slim
 
 WORKDIR /app
 ENV PYTHONPATH=/app
@@ -122,35 +112,31 @@ COPY . .
 
 {expose_line}CMD {entry_cmd}
 """
-            dockerfile.write_text(dockerfile_content)
-            written.append(str(dockerfile))
-            # docker-compose alleen voor web apps
-            if compose_pending and is_web_app:
-                port_compose = plan.get("docker_port", 8000)
-                compose_content = f"""services:
+        dockerfile.write_text(dockerfile_content)
+        written.append(str(dockerfile))
+
+        # 6. docker-compose.yml - alleen voor web apps, ALTIJD overschrijven
+        compose_path = project_path / "docker-compose.yml"
+        if is_web_app:
+            compose_content = f"""services:
   app:
     build: .
     ports:
-      - "{port_compose}:{port_compose}"
+      - "{port}:{port}"
     env_file:
       - .env
     restart: unless-stopped
 """
-                compose_path.write_text(compose_content)
-                written.append(str(compose_path))
+            compose_path.write_text(compose_content)
+            written.append(str(compose_path))
+        elif compose_path.exists():
+            # CLI tool: verwijder verkeerde compose als die er staat
+            compose_path.unlink()
 
-        # 7. README.md - basis template als die niet bestaat
+        # 7. README.md - Builder genereert ALTIJD
         readme_path = project_path / "README.md"
-        if not readme_path.exists():
-            port = plan.get("docker_port", 8000)
-            main_py = project_path / "src" / "main.py"
-            is_web = False
-            if main_py.exists():
-                content = main_py.read_text().lower()
-                is_web = "fastapi" in content or "flask" in content
-
-            if is_web:
-                run_section = f"""## Lokaal draaien
+        if is_web_app:
+            run_section = f"""## Lokaal draaien
 
 ```bash
 docker-compose up --build
@@ -158,8 +144,8 @@ docker-compose up --build
 
 De service draait dan op http://localhost:{port}
 """
-            else:
-                run_section = f"""## Lokaal draaien
+        else:
+            run_section = f"""## Lokaal draaien
 
 ```bash
 docker build -t {project_name} .
@@ -172,7 +158,7 @@ docker run --rm {project_name} python -m src.main --help
 ```
 """
 
-            readme_content = f"""# {project_name}
+        readme_content = f"""# {project_name}
 
 {plan.get('description', 'AI-generated project')}
 
@@ -202,9 +188,8 @@ cp .env.example .env
 ---
 *Auto-generated by AI Software Factory*
 """
-            readme_path.write_text(readme_content)
-            written.append(str(readme_path))
-
+        readme_path.write_text(readme_content)
+        written.append(str(readme_path))
 
         # 8. .gitignore
         gitignore = project_path / ".gitignore"
@@ -215,5 +200,5 @@ cp .env.example .env
             "project_path": str(project_path),
             "files_written": written,
             "file_count": len(written),
-            "is_web_app": "EXPOSE" in dockerfile.read_text() if dockerfile.exists() else False
+            "is_web_app": is_web_app
         }

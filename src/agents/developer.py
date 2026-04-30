@@ -5,12 +5,20 @@ class DeveloperAgent:
     def __init__(self):
         self.llm = LLMClient()
 
-    def run(self, plan: dict, feedback: dict = None) -> dict:
+    def run(self, plan: dict, feedback: dict = None, role_override: str = "developer") -> dict:
         feedback_section = ""
         if feedback:
+            feedback_section = ""
+        if feedback:
+            previous_code = ""
+            if feedback.get("previous_files"):
+                previous_code = "\n\n=== JOUW VORIGE CODE (de basis voor je nieuwe versie) ===\n"
+                for f in feedback["previous_files"]:
+                    previous_code += f"\n--- {f['path']} ---\n{f['content']}\n"
+
             feedback_section = f"""
 
-=== EERDERE POGING FAALDE - LEES DIT ZORGVULDIG ===
+=== EERDERE POGING FAALDE ===
 Je hebt deze code al eerder geschreven. Hij faalde om deze redenen:
 
 {feedback.get('summary', 'Geen samenvatting')}
@@ -18,10 +26,15 @@ Je hebt deze code al eerder geschreven. Hij faalde om deze redenen:
 Specifieke problemen:
 {json.dumps(feedback.get('issues', []), indent=2, ensure_ascii=False)}
 
-Test output (laatste 1000 chars):
-{feedback.get('test_output', 'Geen test output')[:1000]}
+Test output (laatste 3000 chars):
+{feedback.get('test_output', 'Geen test output')[:3000]}
+{previous_code}
 
-LOS DEZE PROBLEMEN OP IN JE NIEUWE VERSIE. Schrijf de complete code opnieuw, niet alleen patches.
+KRITISCH: Behoud zoveel mogelijk van je vorige code. Pas ALLEEN aan wat nodig is om de fouten op te lossen.
+- Schrijf NIET alles opnieuw vanaf nul
+- Schrijf NIET nieuwe tests of features die niet in het plan staan
+- Fix specifiek de gerapporteerde problemen
+- Behoud bestaande logica die WEL werkte
 """
 
         prompt = f"""Je bent een expert Python developer. Schrijf alle code voor dit project:
@@ -81,7 +94,7 @@ Antwoord in dit exacte JSON formaat - GEEN uitleg, alleen het JSON object:
   ]
 }}"""
 
-        response = self.llm.generate(prompt, role="developer", temperature=0.2)
+        response = self.llm.generate(prompt, role=role_override, temperature=0.2)
 
         start = response.find("{")
         end = response.rfind("}") + 1
