@@ -80,7 +80,16 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Geen short flags (-x) als alternatief tenzij expliciet gevraagd
    - Argument-namen moeten matchen met wat een gebruiker zou verwachten
 
-7. ENTRY POINT:
+7. EXTERNE DATA - LEZ DIT ZORGVULDIG:
+   - Als de taak data vereist van een specifieke website, gebruik HTML scraping (requests + BeautifulSoup)
+   - Vermijd API's die een API key vereisen (tenzij expliciet vermeld in de plan/context)
+   - Als het plan een specifieke API noemt zoals "Open-Meteo" - gebruik die
+   - Voor overheidssites of wetenschappelijke bronnen: scrape de HTML met BeautifulSoup
+   - Voorbeeld goed: kmi.be HTML parsen met BeautifulSoup voor weergegevens
+   - Voorbeeld fout: aqicn.org API gebruiken (vereist key)
+   - Voor coordinaat-lookup: gebruik geopy met Nominatim (gratis, geen key)
+
+8. ENTRY POINT:
    - src/main.py is de hoofdfile
    - Voor CLI: gebruik argparse, exit cleanly bij missing args
    - Voor web: definieer 'app' (FastAPI) of vergelijkbaar
