@@ -85,7 +85,9 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Voor CLI: gebruik argparse, exit cleanly bij missing args
    - Voor web: definieer 'app' (FastAPI) of vergelijkbaar
 
-Antwoord in dit exacte JSON formaat - GEEN uitleg, alleen het JSON object:
+KRITISCH: Je antwoord moet ENKEL geldig JSON zijn. Geen uitleg vooraf, geen samenvatting achteraf, geen markdown code fences. Direct beginnen met {{ en eindigen met }}.
+
+Antwoord ALLEEN met dit JSON formaat - GEEN andere tekst:
 {{
   "files": [
     {{"path": "src/main.py", "content": "volledige code hier"}},
@@ -99,5 +101,5 @@ Antwoord in dit exacte JSON formaat - GEEN uitleg, alleen het JSON object:
         from src.llm.json_utils import extract_json
         result = extract_json(response, expect="object")
         if result is None:
-            raise ValueError(f"Planner: kon geen JSON extraheren uit response (lengte {len(response)})")
+            raise ValueError(f"Developer: kon geen JSON extraheren uit response (lengte {len(response)}). Eerste 200 chars: {response[:200]}")
         return result
