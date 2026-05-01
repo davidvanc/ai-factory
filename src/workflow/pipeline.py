@@ -190,49 +190,88 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         run_log["end"] = datetime.now().isoformat()
         log_file.write_text(json.dumps(run_log, indent=2, default=str))
         return {"status": "error", "error": str(e), "log_file": str(log_file)}
+
 def _push_to_git(project_name: str, attempt: int, max_retries: int = 5):
-    """Push gegenereerde output naar GitHub met retry bij race conditions."""
+    """Push gegenereerde output naar GitHub met retry bij race conditions.
+    Faalt LUID bij problemen ipv stilletjes."""
     import subprocess
     import time
 
+    # Pre-check: zijn git identity en credentials in orde?
+    name_check = subprocess.run(["git", "config", "user.name"],
+                                 capture_output=True, text=True, timeout=5)
+    if not name_check.stdout.strip():
+        raise Exception("git user.name is leeg - run: git config --global user.name 'AI Factory Worker'")
+
+    email_check = subprocess.run(["git", "config", "user.email"],
+                                  capture_output=True, text=True, timeout=5)
+    if not email_check.stdout.strip():
+        raise Exception("git user.email is leeg - run: git config --global user.email 'worker@ai-factory.local'")
+
+    last_error = None
+
     for retry in range(max_retries):
         try:
-            # Eerst pullen om eventuele andere worker-pushes binnen te halen
-            subprocess.run(["git", "pull", "--rebase", "--autostash"],
-                         check=True, capture_output=True, timeout=30)
+            # Pull eerst
+            pull = subprocess.run(["git", "pull", "--rebase", "--autostash"],
+                                  capture_output=True, text=True, timeout=30)
+            if pull.returncode != 0:
+                last_error = f"pull faalde: {pull.stderr[:300]}"
+                print(f"[git] {last_error}")
+                time.sleep(2 ** retry)
+                continue
 
             # Add het project
-            subprocess.run(["git", "add", f"output/{project_name}"],
-                         check=True, capture_output=True, timeout=10)
+            add = subprocess.run(["git", "add", f"output/{project_name}"],
+                                 capture_output=True, text=True, timeout=10)
+            if add.returncode != 0:
+                last_error = f"add faalde: {add.stderr[:300]}"
+                print(f"[git] {last_error}")
+                time.sleep(2 ** retry)
+                continue
 
-            # Commit (kan falen als nothing to commit)
-            commit_result = subprocess.run(
+            # Check of er iets te committen is
+            status = subprocess.run(["git", "status", "--porcelain"],
+                                    capture_output=True, text=True, timeout=10)
+            if not status.stdout.strip():
+                print(f"[git] geen wijzigingen voor {project_name} - skip")
+                return  # niets te pushen, dat is OK
+
+            # Commit
+            commit = subprocess.run(
                 ["git", "commit", "-m", f"factory output: {project_name} (poging {attempt})"],
                 capture_output=True, text=True, timeout=10
             )
-            if commit_result.returncode != 0 and "nothing to commit" in commit_result.stdout.lower():
-                print(f"[git] geen wijzigingen voor {project_name}")
-                return
+            if commit.returncode != 0:
+                # "nothing to commit" is OK
+                if "nothing to commit" in commit.stdout.lower() or "nothing to commit" in commit.stderr.lower():
+                    print(f"[git] geen wijzigingen voor {project_name} (commit)")
+                    return
+                last_error = f"commit faalde: {commit.stderr[:300]} {commit.stdout[:200]}"
+                print(f"[git] {last_error}")
+                time.sleep(2 ** retry)
+                continue
 
             # Push
-            push_result = subprocess.run(
-                ["git", "push"],
-                capture_output=True, text=True, timeout=60
-            )
+            push = subprocess.run(["git", "push"],
+                                  capture_output=True, text=True, timeout=60)
+            if push.returncode == 0:
+                print(f"[git] {project_name} ECHT gepusht (poging {retry + 1})")
+                return  # success!
 
-            if push_result.returncode == 0:
-                print(f"[git] {project_name} succesvol gepusht (poging {retry + 1})")
-                return
-
-            # Push faalde — waarschijnlijk race condition
-            print(f"[git] push poging {retry + 1} faalde, retry...")
-            time.sleep(2 ** retry)  # exponential backoff: 1s, 2s, 4s, 8s, 16s
+            # Push faalde - misschien race condition, retry
+            last_error = f"push faalde: {push.stderr[:300]}"
+            print(f"[git] {last_error}, retry {retry + 1}/{max_retries}")
+            time.sleep(2 ** retry)
 
         except subprocess.TimeoutExpired:
-            print(f"[git] timeout op poging {retry + 1}")
+            last_error = f"timeout op poging {retry + 1}"
+            print(f"[git] {last_error}")
             time.sleep(2 ** retry)
-        except subprocess.CalledProcessError as e:
-            print(f"[git] poging {retry + 1} fout: {e.stderr.decode() if e.stderr else e}")
+        except Exception as e:
+            last_error = f"onverwachte fout: {e}"
+            print(f"[git] {last_error}")
             time.sleep(2 ** retry)
 
-    raise Exception(f"Git push faalde na {max_retries} pogingen")
+    # Alle retries op
+    raise Exception(f"Git push faalde na {max_retries} pogingen. Laatste fout: {last_error}")
