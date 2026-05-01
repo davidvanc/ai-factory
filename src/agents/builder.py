@@ -11,19 +11,26 @@ class BuilderAgent:
         project_path = self.output_dir / project_name
 
         # Archiveer vorige poging als die bestaat
+        # Archiveer vorige poging als die bestaat (best-effort, blokkeert nooit retry)
         if attempt > 1 and project_path.exists():
             import shutil
-            archive_dir = project_path / "_attempts" / f"attempt_{attempt - 1}"
-            archive_dir.parent.mkdir(parents=True, exist_ok=True)
-            for item in project_path.iterdir():
-                if item.name == "_attempts":
-                    continue
-                dest = archive_dir / item.name
-                if item.is_dir():
-                    shutil.copytree(item, dest, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(item, dest)
-
+            try:
+                archive_dir = project_path / "_attempts" / f"attempt_{attempt - 1}"
+                archive_dir.parent.mkdir(parents=True, exist_ok=True)
+                for item in project_path.iterdir():
+                    if item.name == "_attempts":
+                        continue
+                    dest = archive_dir / item.name
+                    try:
+                        if item.is_dir():
+                            shutil.copytree(item, dest, dirs_exist_ok=True)
+                        elif item.is_file():
+                            shutil.copy2(item, dest)
+                    except Exception as e:
+                        print(f"[builder] kon {item.name} niet archiveren: {e}")
+                        continue
+            except Exception as e:
+                print(f"[builder] archief-stap mislukt (niet kritiek): {e}")
         project_path.mkdir(parents=True, exist_ok=True)
         written = []
 
