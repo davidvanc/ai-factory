@@ -97,21 +97,12 @@ Een project mag APPROVED zijn met openstaande improvements - die zijn voor een v
 
         response = self.llm.generate(prompt, role="judge", temperature=0.2)
 
-        # JSON extraheren uit response
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        if start == -1 or end <= start:
+        from src.llm.json_utils import extract_json
+        result = extract_json(response, expect="object")
+        if result is None:
             return {
                 "overall_verdict": "REJECTED",
                 "verdict_reason": "Judge gaf geen valide JSON terug",
                 "raw_response": response[:500]
             }
-
-        try:
-            return json.loads(response[start:end])
-        except json.JSONDecodeError as e:
-            return {
-                "overall_verdict": "REJECTED",
-                "verdict_reason": f"JSON parse error: {e}",
-                "raw_response": response[:500]
-            }
+        return result

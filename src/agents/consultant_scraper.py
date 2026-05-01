@@ -47,14 +47,11 @@ Geen uitleg buiten het JSON."""
             stream=False
         )
 
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        if start == -1:
+        from src.llm.json_utils import extract_json
+        result = extract_json(response, expect="object")
+        if result is None:
             return {"search_query": task[:60], "specific_urls": [], "data_to_extract": [], "expected_volume": "small"}
-        try:
-            return json.loads(response[start:end])
-        except json.JSONDecodeError:
-            return {"search_query": task[:60], "specific_urls": [], "data_to_extract": [], "expected_volume": "small"}
+        return result
 
     def _firecrawl_search(self, query: str, limit: int = 5) -> list:
         """Zoek + scrape: search levert URLs, daarna scrape we de top resultaten."""

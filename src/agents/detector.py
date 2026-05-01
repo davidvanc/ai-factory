@@ -76,16 +76,11 @@ Geen uitleg, alleen de array."""
         response = self.llm.generate(prompt, role="judge", temperature=0.1, stream=False)
 
         # Parse JSON array
-        start = response.find("[")
-        end = response.rfind("]") + 1
-        if start == -1:
+        from src.llm.json_utils import extract_json
+        labels = extract_json(response, expect="array")
+        if labels is None or not isinstance(labels, list):
             return ["general"]
-        try:
-            labels = json.loads(response[start:end])
-            return labels if isinstance(labels, list) else ["general"]
-        except json.JSONDecodeError:
-            return ["general"]
-
+        return labels
     def detect(self, task: str) -> dict:
         """
         Returns:

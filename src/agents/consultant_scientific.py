@@ -53,15 +53,11 @@ Geen uitleg buiten het JSON object."""
             stream=False
         )
 
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        if start == -1:
-            return {"knowledge": "", "error": "geen JSON gevonden"}
-
-        try:
-            return json.loads(response[start:end])
-        except json.JSONDecodeError as e:
-            return {"knowledge": response[:1000], "error": f"JSON parse: {e}"}
+        from src.llm.json_utils import extract_json
+        result = extract_json(response, expect="object")
+        if result is None:
+            return {"knowledge": response[:1000], "error": "geen valide JSON"}
+        return result
 
     def to_planner_context(self, consultation: dict) -> str:
         """Converteer naar tekst die in de Planner prompt geïnjecteerd wordt."""

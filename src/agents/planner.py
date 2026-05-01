@@ -87,8 +87,8 @@ Antwoord ALLEEN met het JSON object, geen uitleg."""
 
         response = self.llm.generate(prompt, role="planner", temperature=0.3)
 
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        json_str = response[start:end]
-
-        return json.loads(json_str)
+        from src.llm.json_utils import extract_json
+        result = extract_json(response, expect="object")
+        if result is None:
+            raise ValueError(f"Planner: kon geen JSON extraheren uit response (lengte {len(response)})")
+        return result
