@@ -152,6 +152,13 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         run_log["end"] = datetime.now().isoformat()
         log_file.write_text(json.dumps(run_log, indent=2, default=str))
 
+        # Git push met retry-loop (race condition bescherming)
+        if approved:
+            try:
+                _push_to_git(project_name, attempt)
+            except Exception as e:
+                print(f"[git] push faalde definitief: {e}")
+
         # Memory bijwerken
         try:
             memory = MemoryClient()
@@ -183,3 +190,49 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         run_log["end"] = datetime.now().isoformat()
         log_file.write_text(json.dumps(run_log, indent=2, default=str))
         return {"status": "error", "error": str(e), "log_file": str(log_file)}
+def _push_to_git(project_name: str, attempt: int, max_retries: int = 5):
+    """Push gegenereerde output naar GitHub met retry bij race conditions."""
+    import subprocess
+    import time
+
+    for retry in range(max_retries):
+        try:
+            # Eerst pullen om eventuele andere worker-pushes binnen te halen
+            subprocess.run(["git", "pull", "--rebase", "--autostash"],
+                         check=True, capture_output=True, timeout=30)
+
+            # Add het project
+            subprocess.run(["git", "add", f"output/{project_name}"],
+                         check=True, capture_output=True, timeout=10)
+
+            # Commit (kan falen als nothing to commit)
+            commit_result = subprocess.run(
+                ["git", "commit", "-m", f"factory output: {project_name} (poging {attempt})"],
+                capture_output=True, text=True, timeout=10
+            )
+            if commit_result.returncode != 0 and "nothing to commit" in commit_result.stdout.lower():
+                print(f"[git] geen wijzigingen voor {project_name}")
+                return
+
+            # Push
+            push_result = subprocess.run(
+                ["git", "push"],
+                capture_output=True, text=True, timeout=60
+            )
+
+            if push_result.returncode == 0:
+                print(f"[git] {project_name} succesvol gepusht (poging {retry + 1})")
+                return
+
+            # Push faalde — waarschijnlijk race condition
+            print(f"[git] push poging {retry + 1} faalde, retry...")
+            time.sleep(2 ** retry)  # exponential backoff: 1s, 2s, 4s, 8s, 16s
+
+        except subprocess.TimeoutExpired:
+            print(f"[git] timeout op poging {retry + 1}")
+            time.sleep(2 ** retry)
+        except subprocess.CalledProcessError as e:
+            print(f"[git] poging {retry + 1} fout: {e.stderr.decode() if e.stderr else e}")
+            time.sleep(2 ** retry)
+
+    raise Exception(f"Git push faalde na {max_retries} pogingen")

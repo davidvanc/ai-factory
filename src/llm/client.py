@@ -7,20 +7,22 @@ load_dotenv()
 
 MODEL_ROUTES = {
     "planner":   "anthropic/claude-opus-4-7",
-    "developer": "deepseek/deepseek-v4-flash",
+    "developer": "deepseek/deepseek-v4-pro",
     "developer_premium":  "anthropic/claude-opus-4-7",
     "builder":   "deepseek/deepseek-v4-flash",
     "tester":    "deepseek/deepseek-v4-flash",
     "judge":     "anthropic/claude-sonnet-4-6",
+    "consultant_scientific": "~google/gemini-pro-latest",
 }
 
 # Timeout per rol in seconden
 TIMEOUTS = {
     "planner":   180,   # 3 min
-    "developer": 600,   # 10 min - grote code outputs
+    "developer": 900,   # 15 min - grote code outputs
     "builder":   300,   # 5 min
     "developer_premium":  900,   # Opus is trager, geef meer tijd
     "tester":    300,   # 5 min
+    "consultant_scientific": 120, #  2 min
     "judge":     180,   # 3 min
 }
 
