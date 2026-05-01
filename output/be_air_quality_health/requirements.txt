@@ -1,0 +1,7 @@
+requests
+python-dotenv
+pydantic
+rich
+pytest
+responses
+httpx
