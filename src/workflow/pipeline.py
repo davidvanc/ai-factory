@@ -89,7 +89,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             last_build = build_result
 
             t0 = time.time()
-            test_result = TesterAgent().run(build_result)
+            test_result = TesterAgent().run(build_result, plan=plan)
             run_log["attempts"][f"attempt_{attempt}"]["test_duration"] = time.time() - t0
             run_log["attempts"][f"attempt_{attempt}"]["tests_passed"] = test_result["passed"]
 
@@ -129,7 +129,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 dev_result = DeveloperAgent().run(plan, feedback=feedback, role_override=role)
                 build_result = BuilderAgent().run(plan, dev_result, attempt=attempt)
                 last_build = build_result
-                test_result = TesterAgent().run(build_result)
+                test_result = TesterAgent().run(build_result, plan=plan)
 
                 if not test_result["passed"]:
                     feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)

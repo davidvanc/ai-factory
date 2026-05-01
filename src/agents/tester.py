@@ -1,6 +1,7 @@
 import subprocess
 import time
 from pathlib import Path
+import json
 
 class TesterAgent:
     def __init__(self):
@@ -26,7 +27,7 @@ class TesterAgent:
         except Exception as e:
             return {"exit_code": -1, "stdout": "", "stderr": str(e), "ok": False}
 
-    def run(self, build_result: dict) -> dict:
+    def run(self, build_result: dict, plan: dict = None) -> dict:
         project_path = Path(build_result["project_path"])
         project_name = project_path.name
         is_web_app = build_result.get("is_web_app", False)
@@ -127,6 +128,31 @@ class TesterAgent:
                 print(start["stderr"][-500:])
                 return results
             print("[tester] runtime OK (geen import/syntax fouten)")
+        # === STAP 4: Functional smoke test ===
+        if plan is not None:
+            print("[tester] 4/4 functional smoke test...")
+            try:
+                from src.agents.functional_tester import FunctionalTester
+                func_result = FunctionalTester().run(plan, build_result)
+                results["steps"].append({
+                    "name": "functional",
+                    "ok": func_result["passed"],
+                    "stdout": json.dumps(func_result.get("results", []))[:1500],
+                    "stderr": ""
+                })
+                if not func_result["passed"]:
+                    print("[tester] FAIL: functional smoke test")
+                    return results
+                print(f"[tester] functional OK ({func_result['scenarios_run']} scenarios)")
+            except Exception as e:
+                print(f"[tester] functional test crashed: {e}")
+                results["steps"].append({
+                    "name": "functional",
+                    "ok": False,
+                    "stdout": "",
+                    "stderr": str(e)
+                })
+                return results
 
         results["passed"] = True
         return results
