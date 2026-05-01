@@ -21,15 +21,32 @@ class ScraperConsultant:
 
 Genereer een SEARCH QUERY die een zoekmachine zou geven naar de juiste pagina's.
 
-REGELS:
-- Geef GEEN specifieke URLs op tenzij je 100% zeker bent van het exacte adres (bv. wikipedia.org/wiki/Iets)
-- API endpoints zoals /api/v1/X/Y zijn VERBODEN — die werken niet zonder parameters
-- Twijfel je? Laat specific_urls leeg en focus op een goede search_query
-- search_query: gebruik woorden die op de doelpagina zelf staan (bv. "list of Star Trek episodes wikipedia")
+KRITISCHE REGELS:
+
+1. PREFEREER PUBLIEKE WEBSITES boven API's
+   - Goed: kmi.be, meteo.be, statbel.fgov.be, wikipedia.org, government sites
+   - Slecht: api.x.com endpoints (vaak betalend, vereisen keys, sterven)
+   - Pas op voor "API as a service" sites (waqi.info, openweathermap, openaq)
+
+2. ALLEEN OFFICIËLE / GRATIS BRONNEN
+   - Overheidsdiensten (KMI, FOD, EPA, NOAA, EU agencies)
+   - Wetenschappelijke instellingen (universiteiten, onderzoek instituten)
+   - Wikipedia voor algemene info
+   - Open-Meteo (echt gratis weer-API zonder key)
+
+3. GEEN URLs VERZINNEN
+   - Geef alleen specific_urls als je 100% zeker bent
+   - Twijfel je? Laat leeg en focus op search_query
+   - search_query moet woorden bevatten die op de doelpagina staan
+
+4. SEARCH QUERY TIPS
+   - Voeg "site:overheid.be" of "site:gov" toe als je specifiek officiële bronnen wil
+   - Voeg "scrape" of "html table" NIET toe (gebruiker wil data, niet hoe te scrapen)
+   - Maximaal 8 woorden
 
 Antwoord ALLEEN met dit JSON:
 {{
-  "search_query": "korte search opdracht (max 8 woorden) - dit is verplicht",
+  "search_query": "korte search opdracht (verplicht)",
   "specific_urls": [],
   "data_to_extract": [
     "veld 1",
