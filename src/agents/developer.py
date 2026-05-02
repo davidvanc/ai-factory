@@ -49,13 +49,25 @@ Endpoints om te implementeren: {json.dumps(plan.get('endpoints', []), indent=2, 
 KRITISCHE REGELS - LEES ZORGVULDIG:
 
 0. MICROSERVICE ARCHITECTUUR (kritisch):
-   - Het project is een FastAPI service, GEEN CLI tool
-   - src/main.py definieert: app = FastAPI()
-   - Implementeer ELK endpoint uit het plan exact zoals beschreven
-   - Endpoints uit plan moeten EXACT dezelfde method + path hebben als beschreven
+   - Het project gebruikt het standaard service_template (al aanwezig in src/service_template/)
+   - src/main.py MOET er zo uitzien:
+
+     from src.service_template.bootstrap import create_app
+     from src.routes import router as business_router
+
+     app = create_app(
+         title="<beschrijvende naam>",
+         version="0.1.0",
+         business_routers=[business_router],
+     )
+
+   - Definieer je eigen endpoints in src/routes.py als APIRouter
+   - GEEN @app.get/@app.post in main.py - alles in routes.py
    - Voor request bodies: gebruik Pydantic BaseModel klassen
-   - Returns altijd JSON-serializable types (dict, list, primitives)
-   - Voeg ALTIJD GET /health endpoint toe dat {{"status": "ok"}} teruggeeft
+   - Returns altijd JSON-serializable types
+   - GEEN handmatige /health, /ready, /metrics endpoints maken - die komen automatisch van het template
+   - Voor logging: from src.service_template.logging_config import get_logger; log = get_logger("naam")
+   - Voor settings: from src.service_template.settings import settings (eigen settings extenden via subclass)
 
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/

@@ -35,6 +35,18 @@ class BuilderAgent:
         project_path.mkdir(parents=True, exist_ok=True)
         written = []
 
+        # 0. Kopieer service template in elke service
+        if plan.get("is_service", True):
+            import shutil
+            template_src = Path(__file__).parent.parent / "service_template"
+            template_dst = project_path / "src" / "service_template"
+            if template_src.exists():
+                template_dst.parent.mkdir(parents=True, exist_ok=True)
+                if template_dst.exists():
+                    shutil.rmtree(template_dst)
+                shutil.copytree(template_src, template_dst, ignore=shutil.ignore_patterns("__pycache__"))
+                written.append(str(template_dst))
+
         # 1. Schrijf alle bestanden van de developer
         # MAAR: skip Dockerfile, docker-compose.yml, README.md - die maakt Builder zelf
         builder_owned = {"Dockerfile", "docker-compose.yml", "README.md"}
@@ -62,7 +74,12 @@ class BuilderAgent:
             existing_reqs = [line.strip() for line in req_path.read_text().splitlines() if line.strip()]
 
         plan_reqs = plan.get("requirements", [])
-        guaranteed_test_deps = ["pytest", "httpx"]
+        guaranteed_test_deps = [
+            "pytest", "httpx",
+            # Service template dependencies
+            "fastapi", "uvicorn", "pydantic-settings>=2.0",
+            "structlog", "prometheus-client>=0.20"
+        ]
 
         all_reqs = list(existing_reqs) + list(plan_reqs)
         for dep in guaranteed_test_deps:
