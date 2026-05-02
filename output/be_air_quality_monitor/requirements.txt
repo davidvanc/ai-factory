@@ -1,7 +1,0 @@
-requests
-python-dotenv
-pytest
-pytest-mock
-responses
-tabulate
-httpx

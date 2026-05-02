@@ -1,3 +1,0 @@
-pytest
-click
-httpx
