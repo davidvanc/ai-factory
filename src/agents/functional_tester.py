@@ -12,17 +12,22 @@ from src.llm.client import LLMClient
 from src.llm.json_utils import extract_json
 
 
-def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: int = 15) -> bool:
-    """Wacht tot een poort luistert. Returns True bij succes, False bij timeout."""
+def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: int = 30) -> bool:
+    """Wacht tot er een echt HTTP response komt. TCP connect alleen is niet genoeg."""
+    import urllib.request
+    import urllib.error
     start = time.time()
     while time.time() - start < timeout:
         try:
-            with socket.create_connection((host, port), timeout=1):
+            req = urllib.request.Request(f"http://{host}:{port}/", method="GET")
+            with urllib.request.urlopen(req, timeout=2) as r:
                 return True
-        except (socket.timeout, ConnectionRefusedError, OSError):
+        except urllib.error.HTTPError:
+            # 404 of 405 is OK - de service luistert wel
+            return True
+        except (urllib.error.URLError, ConnectionRefusedError, OSError, TimeoutError):
             time.sleep(0.5)
     return False
-
 
 class FunctionalTester:
     def __init__(self):
