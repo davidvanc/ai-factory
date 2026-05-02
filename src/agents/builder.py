@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from src.llm.memory_client import MemoryClient
 
+
 class BuilderAgent:
     def __init__(self, output_dir: str = "output"):
         self.output_dir = Path(output_dir)
@@ -11,7 +12,6 @@ class BuilderAgent:
         project_name = plan["project_name"]
         project_path = self.output_dir / project_name
 
-        # Archiveer vorige poging als die bestaat
         # Archiveer vorige poging als die bestaat (best-effort, blokkeert nooit retry)
         if attempt > 1 and project_path.exists():
             import shutil
@@ -32,6 +32,7 @@ class BuilderAgent:
                         continue
             except Exception as e:
                 print(f"[builder] archief-stap mislukt (niet kritiek): {e}")
+
         project_path.mkdir(parents=True, exist_ok=True)
         written = []
 
@@ -47,12 +48,11 @@ class BuilderAgent:
                 shutil.copytree(template_src, template_dst, ignore=shutil.ignore_patterns("__pycache__"))
                 written.append(str(template_dst))
 
-        # 1. Schrijf alle bestanden van de developer
-        # MAAR: skip Dockerfile, docker-compose.yml, README.md - die maakt Builder zelf
+        # 1. Schrijf alle bestanden van de developer (skip Builder-owned)
         builder_owned = {"Dockerfile", "docker-compose.yml", "README.md"}
         for f in dev_result["files"]:
             if Path(f["path"]).name in builder_owned:
-                continue  # negeer wat de Developer zou hebben gemaakt
+                continue
             file_path = project_path / f["path"]
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f["content"])
@@ -67,7 +67,7 @@ class BuilderAgent:
                     init_file.write_text("")
                     written.append(str(init_file))
 
-        # 3. requirements.txt - met gegarandeerde test dependencies
+        # 3. requirements.txt - met gegarandeerde dependencies
         req_path = project_path / "requirements.txt"
         existing_reqs = []
         if req_path.exists():
@@ -76,7 +76,6 @@ class BuilderAgent:
         plan_reqs = plan.get("requirements", [])
         guaranteed_test_deps = [
             "pytest", "httpx",
-            # Service template dependencies
             "fastapi", "uvicorn", "pydantic-settings>=2.0",
             "structlog", "prometheus-client>=0.20"
         ]
@@ -107,11 +106,9 @@ class BuilderAgent:
             env_real.write_text("# Lokale env vars - niet committen\n")
             written.append(str(env_real))
 
-        # 5. Dockerfile - altijd FastAPI service architectuur
+        # 5. Dockerfile
         port = MemoryClient().allocate_port(project_name)
-        is_web_app = True  # altijd service tenzij plan expliciet anders zegt
-        if not plan.get("is_service", True):
-            is_web_app = False
+        is_web_app = plan.get("is_service", True)
 
         if is_web_app:
             entry_cmd = f'["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]'
@@ -126,7 +123,12 @@ class BuilderAgent:
 WORKDIR /app
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV SERVICE_PORT={port}
+ENV SERVICE_NAME={project_name}
+ENV SERVICE_VERSION=0.1.0
+ENV PORT={port}
+ENV ENVIRONMENT=dev
+ENV LOG_FORMAT=json
+ENV LOG_LEVEL=INFO
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -138,7 +140,7 @@ COPY . .
         dockerfile.write_text(dockerfile_content)
         written.append(str(dockerfile))
 
-        # 6. docker-compose.yml - alleen voor web apps, ALTIJD overschrijven
+        # 6. docker-compose.yml
         compose_path = project_path / "docker-compose.yml"
         if is_web_app:
             compose_content = f"""services:
@@ -153,10 +155,9 @@ COPY . .
             compose_path.write_text(compose_content)
             written.append(str(compose_path))
         elif compose_path.exists():
-            # CLI tool: verwijder verkeerde compose als die er staat
             compose_path.unlink()
 
-        # 7. README.md - met curl voorbeelden uit het plan
+        # 7. README.md
         readme_path = project_path / "README.md"
 
         if is_web_app:
@@ -169,35 +170,42 @@ docker run --rm -p {port}:{port} {project_name}
 
 De service draait dan op http://localhost:{port}
 """
-            # Endpoints met curl voorbeelden
             endpoint_section = "\n## Endpoints en testcommando's\n"
             endpoints = plan.get("endpoints", [])
-            if endpoints:
-                for ep in endpoints:
+            template_paths = {"/health", "/ready", "/metrics"}
+            endpoints_business = [ep for ep in endpoints if ep.get("path") not in template_paths]
+
+            if endpoints_business:
+                for ep in endpoints_business:
                     endpoint_section += f"\n### {ep.get('method', 'GET')} {ep.get('path', '/')}\n"
                     if ep.get("description"):
                         endpoint_section += f"\n{ep['description']}\n"
-                    # Genereer curl uit request_example als curl_example ontbreekt
                     curl = ep.get("curl_example", "")
                     if not curl:
                         method = ep.get("method", "GET").upper()
                         path = ep.get("path", "/")
                         body = ep.get("request_example")
                         if method in ("POST", "PUT", "PATCH") and body:
-                            import json as _json
-                            body_str = _json.dumps(body, ensure_ascii=False).replace("'", "\\'")
+                            body_str = json.dumps(body, ensure_ascii=False).replace("'", "\\'")
                             curl = f"curl -X {method} http://localhost:PORT{path} -H 'Content-Type: application/json' -d '{body_str}'"
                         else:
                             curl = f"curl -X {method} 'http://localhost:PORT{path}'"
 
                     if curl:
-                        # Normaliseer alle hardcoded poorten in curl naar onze poort
                         import re as _re
                         curl = _re.sub(r":\d{4,5}(?=/|'|\")", f":{port}", curl)
                         curl = curl.replace("PORT", str(port))
                         endpoint_section += f"\n```bash\n{curl}\n```\n"
-            # Standaard health endpoint
-            endpoint_section += f"\n### GET /health\n\n```bash\ncurl http://localhost:{port}/health\n```\n"
+                    if ep.get("response_example"):
+                        endpoint_section += f"\n**Response:**\n```json\n{json.dumps(ep['response_example'], indent=2, ensure_ascii=False)}\n```\n"
+
+            endpoint_section += f"\n## Standaard endpoints (van service template)\n\n"
+            endpoint_section += f"```bash\n"
+            endpoint_section += f"curl http://localhost:{port}/health    # liveness probe\n"
+            endpoint_section += f"curl http://localhost:{port}/ready     # readiness probe\n"
+            endpoint_section += f"curl http://localhost:{port}/metrics   # Prometheus metrics\n"
+            endpoint_section += f"open http://localhost:{port}/docs      # OpenAPI documentation\n"
+            endpoint_section += f"```\n"
         else:
             run_section = f"""## Lokaal draaien
 
