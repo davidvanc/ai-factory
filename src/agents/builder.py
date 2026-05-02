@@ -1,6 +1,7 @@
 import os
 import json
 from pathlib import Path
+from src.llm.memory_client import MemoryClient
 
 class BuilderAgent:
     def __init__(self, output_dir: str = "output"):
@@ -89,28 +90,26 @@ class BuilderAgent:
             env_real.write_text("# Lokale env vars - niet committen\n")
             written.append(str(env_real))
 
-        # 5. Dockerfile - Builder genereert ALTIJD zijn eigen versie
-        port = plan.get("docker_port", 8000)
-        main_py = project_path / "src" / "main.py"
-        entry_cmd = '["python", "-m", "src.main"]'
-        is_web_app = False
+        # 5. Dockerfile - altijd FastAPI service architectuur
+        port = MemoryClient().allocate_port(project_name)
+        is_web_app = True  # altijd service tenzij plan expliciet anders zegt
+        if not plan.get("is_service", True):
+            is_web_app = False
 
-        if main_py.exists():
-            content = main_py.read_text().lower()
-            if "fastapi" in content:
-                entry_cmd = f'["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]'
-                is_web_app = True
-            elif "flask" in content and "app.run" in content:
-                entry_cmd = '["python", "-m", "src.main"]'
-                is_web_app = True
+        if is_web_app:
+            entry_cmd = f'["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]'
+            expose_line = f"EXPOSE {port}\n"
+        else:
+            entry_cmd = '["python", "-m", "src.main"]'
+            expose_line = ""
 
-        expose_line = f"EXPOSE {port}\n" if is_web_app else ""
         dockerfile = project_path / "Dockerfile"
         dockerfile_content = f"""FROM python:3.11-slim
 
 WORKDIR /app
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV SERVICE_PORT={port}
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -140,17 +139,38 @@ COPY . .
             # CLI tool: verwijder verkeerde compose als die er staat
             compose_path.unlink()
 
-        # 7. README.md - Builder genereert ALTIJD
+        # 7. README.md - met curl voorbeelden uit het plan
         readme_path = project_path / "README.md"
+
         if is_web_app:
             run_section = f"""## Lokaal draaien
 
 ```bash
-docker-compose up --build
+docker build -t {project_name} .
+docker run --rm -p {port}:{port} {project_name}
 ```
 
 De service draait dan op http://localhost:{port}
 """
+            # Endpoints met curl voorbeelden
+            endpoint_section = "\n## Endpoints en testcommando's\n"
+            endpoints = plan.get("endpoints", [])
+            if endpoints:
+                for ep in endpoints:
+                    endpoint_section += f"\n### {ep.get('method', 'GET')} {ep.get('path', '/')}\n"
+                    if ep.get("description"):
+                        endpoint_section += f"\n{ep['description']}\n"
+                    curl = ep.get("curl_example", "")
+                    if curl:
+                        # Vervang PORT placeholder door echte poort
+                        curl = curl.replace("PORT", str(port))
+                        endpoint_section += f"\n```bash\n{curl}\n```\n"
+                    if ep.get("response_example"):
+                        import json as _json
+                        endpoint_section += f"\n**Response:**\n```json\n{_json.dumps(ep['response_example'], indent=2, ensure_ascii=False)}\n```\n"
+
+            # Standaard health endpoint
+            endpoint_section += f"\n### GET /health\n\n```bash\ncurl http://localhost:{port}/health\n```\n"
         else:
             run_section = f"""## Lokaal draaien
 
@@ -158,18 +178,16 @@ De service draait dan op http://localhost:{port}
 docker build -t {project_name} .
 docker run --rm {project_name}
 ```
-
-Voor een CLI tool met argumenten:
-```bash
-docker run --rm {project_name} python -m src.main --help
-```
 """
+            endpoint_section = ""
 
         readme_content = f"""# {project_name}
 
-{plan.get('description', 'AI-generated project')}
+{plan.get('description', 'AI-generated service')}
 
 {run_section}
+{endpoint_section}
+
 ## Tests draaien
 
 ```bash

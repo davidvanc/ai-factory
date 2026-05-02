@@ -43,15 +43,40 @@ class LLMClient:
             "Content-Type": "application/json"
         }
 
+        # Bepaal of dit model caching ondersteunt
+        # Anthropic (Claude) en Google (Gemini) ondersteunen prompt caching via OpenRouter
+        supports_caching = (
+            model.startswith("anthropic/") or
+            model.startswith("google/") or
+            model.startswith("~google/")
+        )
+
+        if supports_caching and len(prompt) > 1024:
+            # Cache het grootste deel van de prompt; alleen laatste 200 chars vers
+            cache_split = max(0, len(prompt) - 200)
+            messages = [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt[:cache_split],
+                        "cache_control": {"type": "ephemeral"}
+                    },
+                    {
+                        "type": "text",
+                        "text": prompt[cache_split:]
+                    }
+                ]
+            }]
+        else:
+            messages = [{"role": "user", "content": prompt}]
+
         payload = {
             "model": model,
             "temperature": temperature,
             "stream": stream,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
+            "messages": messages
         }
-
         if not stream:
             response = requests.post(self.base_url, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()

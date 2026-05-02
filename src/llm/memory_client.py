@@ -55,5 +55,20 @@ class MemoryClient:
                                      params={"task": task, "limit": limit})
         return result if result else []
 
+    def allocate_port(self, project_name: str, start: int = 8001, end: int = 9000) -> int:
+        """Reserveer (of haal op) een unieke poort voor een project. Fallback: 8000 bij fout."""
+        result = self._safe_request(
+            "POST", "/ports/allocate",
+            params={"project_name": project_name, "start_range": start, "end_range": end}
+        )
+        if result and "port" in result:
+            return result["port"]
+        print(f"[memory] port allocate faalde, fallback naar 8000")
+        return 8000
+
+    def list_ports(self) -> list:
+        result = self._safe_request("GET", "/ports")
+        return result if result else []
+
     def get_stats(self) -> Optional[dict]:
         return self._safe_request("GET", "/stats")

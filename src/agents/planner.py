@@ -61,25 +61,53 @@ class PlannerAgent:
 {consultant_context}
 {lessons_section}
 
-Maak een gedetailleerd projectplan in JSON formaat met deze exacte structuur:
+Maak een gedetailleerd projectplan voor een MICROSERVICE in JSON formaat.
+
+ARCHITECTUUR REGELS (kritisch):
+- Default: het project is een HTTP MICROSERVICE met FastAPI
+- Endpoints zijn werkwoorden of resources, bv. POST /convert, GET /calculate, GET /status
+- ALLE business logic is bereikbaar via HTTP endpoints, geen pure CLI tools
+- src/main.py definieert de FastAPI 'app' variabele
+- Alleen als de taak ECHT geen service kan zijn (bv. "schrijf een eenmalig migratie-script"), maak je een CLI
+
+REGELS VOOR ENDPOINTS:
+- Documenteer elk endpoint in 'endpoints' lijst met method + path + body/params + voorbeeld
+- Voor input: gebruik query parameters (eenvoudige data) of JSON body (complexere data)
+- Output: altijd JSON
+
+JSON STRUCTUUR:
 {{
   "project_name": "korte_naam_zonder_spaties",
-  "description": "wat het project doet",
+  "description": "wat de service doet",
+  "is_service": true,
   "structure": [
     "src/main.py",
-    "src/module.py",
-    "tests/test_main.py"
+    "src/routes.py",
+    "src/logic.py",
+    "tests/test_routes.py"
+  ],
+  "endpoints": [
+    {{
+      "method": "POST",
+      "path": "/convert",
+      "description": "wat het doet",
+      "request_example": {{"value": "FF5733"}},
+      "response_example": {{"rgb": [255, 87, 51]}},
+      "curl_example": "curl -X POST http://localhost:PORT/convert -H 'Content-Type: application/json' -d '{{\\"value\\": \\"FF5733\\"}}'"
+    }}
   ],
   "tests": [
-    "test dat de hoofdfunctie werkt",
-    "test dat de output correct is"
+    "test dat POST /convert correct werkt voor geldige input",
+    "test dat ongeldige input een 422 status geeft"
   ],
   "requirements": [
-    "requests",
-    "python-dotenv"
-  ],
-  "docker_port": 8080
+    "fastapi",
+    "uvicorn",
+    "pydantic"
+  ]
 }}
+
+Antwoord ALLEEN met het JSON object, geen uitleg.
 
 Als er WETENSCHAPPELIJKE CONTEXT of LIVE WEB DATA hierboven staat, GEBRUIK die expliciet bij het opstellen van structure, tests en requirements.
 

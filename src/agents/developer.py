@@ -48,6 +48,15 @@ Docker poort: {plan['docker_port']}
 {feedback_section}
 KRITISCHE REGELS - LEES ZORGVULDIG:
 
+0. MICROSERVICE ARCHITECTUUR (kritisch):
+   - Het project is een FastAPI service, GEEN CLI tool
+   - src/main.py definieert: app = FastAPI()
+   - Implementeer ELK endpoint uit het plan exact zoals beschreven
+   - Endpoints uit plan moeten EXACT dezelfde method + path hebben als beschreven
+   - Voor request bodies: gebruik Pydantic BaseModel klassen
+   - Returns altijd JSON-serializable types (dict, list, primitives)
+   - Voeg ALTIJD GET /health endpoint toe dat {"status": "ok"} teruggeeft
+
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/
