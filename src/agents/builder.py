@@ -163,12 +163,10 @@ De service draait dan op http://localhost:{port}
                     curl = ep.get("curl_example", "")
                     if curl:
                         # Vervang PORT placeholder door echte poort
+                        # Normaliseer alle hardcoded poorten in curl naar onze poort
+                        import re as _re
+                        curl = _re.sub(r":\d{4,5}(?=/|'|\")", f":{port}", curl)
                         curl = curl.replace("PORT", str(port))
-                        endpoint_section += f"\n```bash\n{curl}\n```\n"
-                    if ep.get("response_example"):
-                        import json as _json
-                        endpoint_section += f"\n**Response:**\n```json\n{_json.dumps(ep['response_example'], indent=2, ensure_ascii=False)}\n```\n"
-
             # Standaard health endpoint
             endpoint_section += f"\n### GET /health\n\n```bash\ncurl http://localhost:{port}/health\n```\n"
         else:
