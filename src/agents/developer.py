@@ -44,7 +44,7 @@ Beschrijving: {plan['description']}
 Bestanden: {json.dumps(plan['structure'], indent=2)}
 Requirements: {json.dumps(plan['requirements'], indent=2)}
 Tests die moeten slagen: {json.dumps(plan['tests'], indent=2)}
-Docker poort: {plan['docker_port']}
+Endpoints om te implementeren: {json.dumps(plan.get('endpoints', []), indent=2, ensure_ascii=False)}
 {feedback_section}
 KRITISCHE REGELS - LEES ZORGVULDIG:
 
