@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+pytest
+httpx
+pydantic-settings>=2.0
+structlog
+prometheus-client>=0.20
