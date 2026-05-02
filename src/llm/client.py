@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -85,11 +86,21 @@ class LLMClient:
         # Streaming mode: live tonen wat binnenkomt
         print(f"[{role} via {model}] streaming...", flush=True)
         full_text = ""
+        last_chunk_time = time.time()
+        idle_timeout = 90  # max 90s zonder nieuwe data
+
         with requests.post(self.base_url, headers=headers, json=payload, timeout=timeout, stream=True) as response:
             response.raise_for_status()
-            for line in response.iter_lines():
+            for line in response.iter_lines(decode_unicode=False):
+                # Idle timeout check
+                if time.time() - last_chunk_time > idle_timeout:
+                    print(f"\n[{role}] idle timeout: geen data voor {idle_timeout}s, abort")
+                    raise TimeoutError(f"LLM stream stuck: no data for {idle_timeout}s")
+
                 if not line:
                     continue
+                last_chunk_time = time.time()
+
                 line = line.decode("utf-8")
                 if not line.startswith("data: "):
                     continue
@@ -104,5 +115,5 @@ class LLMClient:
                         full_text += delta
                 except (json.JSONDecodeError, KeyError):
                     continue
-        print()  # nieuwe regel na streaming
+        print()
         return full_text
