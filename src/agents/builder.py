@@ -160,13 +160,25 @@ De service draait dan op http://localhost:{port}
                     endpoint_section += f"\n### {ep.get('method', 'GET')} {ep.get('path', '/')}\n"
                     if ep.get("description"):
                         endpoint_section += f"\n{ep['description']}\n"
+                    # Genereer curl uit request_example als curl_example ontbreekt
                     curl = ep.get("curl_example", "")
+                    if not curl:
+                        method = ep.get("method", "GET").upper()
+                        path = ep.get("path", "/")
+                        body = ep.get("request_example")
+                        if method in ("POST", "PUT", "PATCH") and body:
+                            import json as _json
+                            body_str = _json.dumps(body, ensure_ascii=False).replace("'", "\\'")
+                            curl = f"curl -X {method} http://localhost:PORT{path} -H 'Content-Type: application/json' -d '{body_str}'"
+                        else:
+                            curl = f"curl -X {method} 'http://localhost:PORT{path}'"
+
                     if curl:
-                        # Vervang PORT placeholder door echte poort
                         # Normaliseer alle hardcoded poorten in curl naar onze poort
                         import re as _re
                         curl = _re.sub(r":\d{4,5}(?=/|'|\")", f":{port}", curl)
                         curl = curl.replace("PORT", str(port))
+                        endpoint_section += f"\n```bash\n{curl}\n```\n"
             # Standaard health endpoint
             endpoint_section += f"\n### GET /health\n\n```bash\ncurl http://localhost:{port}/health\n```\n"
         else:

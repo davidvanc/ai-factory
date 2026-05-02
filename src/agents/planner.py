@@ -107,6 +107,11 @@ JSON STRUCTUUR:
   ]
 }}
 
+KRITISCH: Elke endpoint MOET hebben:
+- request_example (dict met EXACT de velden die je in de Pydantic model gebruikt)
+- response_example
+- curl_example (gebruik PORT placeholder, geen hardcoded poort)
+
 Antwoord ALLEEN met het JSON object, geen uitleg.
 
 Als er WETENSCHAPPELIJKE CONTEXT of LIVE WEB DATA hierboven staat, GEBRUIK die expliciet bij het opstellen van structure, tests en requirements.
