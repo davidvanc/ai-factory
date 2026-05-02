@@ -8,7 +8,7 @@ load_dotenv()
 
 MODEL_ROUTES = {
     "planner":   "anthropic/claude-opus-4-7",
-    "developer": "deepseek/deepseek-v4-pro",
+    "developer": "~google/gemini-pro-latest",
     "developer_premium":  "anthropic/claude-opus-4-7",
     "builder":   "deepseek/deepseek-v4-flash",
     "tester":    "deepseek/deepseek-v4-flash",
@@ -19,7 +19,7 @@ MODEL_ROUTES = {
 # Timeout per rol in seconden
 TIMEOUTS = {
     "planner":   180,   # 3 min
-    "developer": 900,   # 15 min - grote code outputs
+    "developer": 600,   # 15 min - grote code outputs
     "builder":   300,   # 5 min
     "developer_premium":  900,   # Opus is trager, geef meer tijd
     "tester":    300,   # 5 min
@@ -76,6 +76,7 @@ class LLMClient:
             "model": model,
             "temperature": temperature,
             "stream": stream,
+            "max_tokens": 32000,
             "messages": messages
         }
         if not stream:
