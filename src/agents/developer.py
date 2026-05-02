@@ -69,6 +69,26 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Voor logging: from src.service_template.logging_config import get_logger; log = get_logger("naam")
    - Voor settings: from src.service_template.settings import settings (eigen settings extenden via subclass)
 
+0b. SECURITY EN RESILIENCE (kritisch om te WETEN, niet om handmatig te bouwen):
+   - Het service_template levert AUTOMATISCH:
+     * Rate limiting (slowapi, opt-in via env var)
+     * Bearer token auth (opt-in, voor business endpoints)
+     * Security headers (X-Content-Type-Options, X-Frame-Options, HSTS)
+     * Request timeout (30s default)
+     * Request body size limit (1MB default)
+     * CORS (configureerbaar)
+   - Voor endpoints die auth NODIG hebben:
+     from src.service_template.auth import verify_bearer_token
+     from fastapi import Depends
+     @router.post("/secure-endpoint")
+     async def my_endpoint(token: str = Depends(verify_bearer_token), ...):
+   - Voor extra rate limit per endpoint:
+     from src.service_template.rate_limit import limiter
+     @router.get("/expensive-endpoint")
+     @limiter.limit("5/minute")
+     async def my_endpoint(request: Request, ...):
+   - GEEN custom auth, CORS of rate limiting code schrijven - gebruik het template
+
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/
