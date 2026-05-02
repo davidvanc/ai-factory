@@ -1,164 +1,238 @@
 """
 Functional Tester — bedenkt en draait echte smoke tests op het gegenereerde project.
-LLM bedenkt 2-3 realistische scenarios, runtime executeert ze, LLM oordeelt over output.
+Voor microservices: start container, doe HTTP calls naar endpoints uit het plan.
+Voor CLI tools: roep aan met argumenten en check stdout.
 """
 import json
 import subprocess
+import time
+import socket
 from pathlib import Path
 from src.llm.client import LLMClient
 from src.llm.json_utils import extract_json
+
+
+def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: int = 15) -> bool:
+    """Wacht tot een poort luistert. Returns True bij succes, False bij timeout."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            time.sleep(0.5)
+    return False
 
 
 class FunctionalTester:
     def __init__(self):
         self.llm = LLMClient()
 
-    def _generate_scenarios(self, plan: dict, project_path: Path) -> list:
-        """Vraag LLM om 2-3 realistische test scenarios voor dit project."""
-        # Lees main.py om CLI structuur te begrijpen
+    def _run_service_tests(self, plan: dict, image_tag: str, port: int) -> dict:
+        """Test FastAPI service door echte HTTP calls te doen."""
+        container_name = f"functest-{plan['project_name']}"
+
+        # Eerste cleanup
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, timeout=10)
+
+        # Start container in background, mapped naar dezelfde poort
+        try:
+            subprocess.run([
+                "docker", "run", "-d", "--rm",
+                "--name", container_name,
+                "-p", f"{port}:{port}",
+                image_tag
+            ], check=True, capture_output=True, timeout=30)
+        except subprocess.CalledProcessError as e:
+            return {
+                "passed": False,
+                "scenarios_run": 0,
+                "results": [{
+                    "scenario": {"name": "container start"},
+                    "evaluation": {"passed": False, "reasons": [f"start failed: {e.stderr.decode()[:200]}"]}
+                }]
+            }
+
+        # Wacht tot service luistert
+        if not _wait_for_port(port, timeout=20):
+            logs = subprocess.run(["docker", "logs", container_name],
+                                  capture_output=True, text=True, timeout=10)
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, timeout=10)
+            return {
+                "passed": False,
+                "scenarios_run": 0,
+                "results": [{
+                    "scenario": {"name": "service ready"},
+                    "evaluation": {"passed": False, "reasons": [f"port {port} not listening after 20s"]},
+                    "run": {"stderr": logs.stderr[-500:], "stdout": logs.stdout[-500:]}
+                }]
+            }
+
+        # Test elk endpoint uit het plan + altijd /health
+        endpoints = list(plan.get("endpoints", []))
+        # Voeg /health toe als die niet in de lijst staat
+        if not any(ep.get("path") == "/health" for ep in endpoints):
+            endpoints.append({
+                "method": "GET",
+                "path": "/health",
+                "description": "health check"
+            })
+
+        results = []
+        all_passed = True
+
+        try:
+            for ep in endpoints:
+                method = ep.get("method", "GET").upper()
+                path = ep.get("path", "/")
+                request_body = ep.get("request_example")
+
+                cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                       "-X", method, f"http://localhost:{port}{path}"]
+                if request_body and method in ("POST", "PUT", "PATCH"):
+                    cmd.extend(["-H", "Content-Type: application/json",
+                                "-d", json.dumps(request_body)])
+
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    status_code = r.stdout.strip()
+                    # Ook de body ophalen voor inspectie
+                    body_cmd = ["curl", "-s", "-X", method, f"http://localhost:{port}{path}"]
+                    if request_body and method in ("POST", "PUT", "PATCH"):
+                        body_cmd.extend(["-H", "Content-Type: application/json",
+                                         "-d", json.dumps(request_body)])
+                    body_r = subprocess.run(body_cmd, capture_output=True, text=True, timeout=10)
+                    body = body_r.stdout[:500]
+
+                    accept = (200 <= int(status_code) < 300) if status_code.isdigit() else False
+                    reasons = [] if accept else [f"got HTTP {status_code} (expected 2xx)"]
+
+                    results.append({
+                        "scenario": {"name": f"{method} {path}", "args": []},
+                        "run": {"stdout": body, "stderr": "", "exit_code": 0 if accept else 1},
+                        "evaluation": {"passed": accept, "reasons": reasons, "scenario_name": f"{method} {path}"}
+                    })
+                    if not accept:
+                        all_passed = False
+                        print(f"[functional]   FAIL: {method} {path} → HTTP {status_code}")
+                    else:
+                        print(f"[functional]   OK: {method} {path} → HTTP {status_code}")
+                except subprocess.TimeoutExpired:
+                    all_passed = False
+                    results.append({
+                        "scenario": {"name": f"{method} {path}", "args": []},
+                        "run": {"stdout": "", "stderr": "TIMEOUT", "exit_code": -1},
+                        "evaluation": {"passed": False, "reasons": ["timeout"], "scenario_name": f"{method} {path}"}
+                    })
+
+        finally:
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, timeout=15)
+
+        return {
+            "passed": all_passed,
+            "scenarios_run": len(results),
+            "results": results
+        }
+
+    def _run_cli_tests(self, plan: dict, project_path: Path, image_tag: str) -> dict:
+        """Voor CLI tools: bedenk scenarios en draai ze als argumenten."""
         main_py = project_path / "src" / "main.py"
         main_content = main_py.read_text() if main_py.exists() else ""
 
-        prompt = f"""Een Python project is net gebouwd. Genereer 2-3 SMOKE TESTS die het echt aanroepen.
+        prompt = f"""Een Python CLI is net gebouwd. Genereer 2-3 SMOKE TESTS die het echt aanroepen.
 
 Project: {plan['project_name']}
 Beschrijving: {plan.get('description', '')}
 
-src/main.py inhoud:
+src/main.py:
 ```python
 {main_content[:3000]}
 ```
 
-Genereer realistische test scenarios. Antwoord ALLEEN met dit JSON:
+Antwoord ALLEEN met JSON:
 {{
   "scenarios": [
     {{
       "name": "korte beschrijving",
-      "args": ["argument1", "argument2"],
-      "expect_in_stdout": ["string1 die in output zou moeten staan"],
+      "args": ["arg1", "arg2"],
+      "expect_in_stdout": ["string"],
       "expect_no_error": true
     }}
   ]
-}}
-
-REGELS:
-- args is een lijst van CLI argumenten zoals een gebruiker zou typen
-- Voor web apps: gebruik args = ["--help"] (we testen alleen dat het start)
-- Voor CLI tools: bedenk realistische input
-- expect_in_stdout: keywords die in een correcte output zouden moeten staan (bv. cijfers, woorden, JSON-keys)
-- Als project externe API's gebruikt: scenario mag "expect_no_error": false hebben (alleen check dat het niet crasht)
-- 2-3 scenarios is genoeg
-
-Geen uitleg, alleen het JSON object."""
+}}"""
 
         response = self.llm.generate(prompt, role="judge", temperature=0.3, stream=False)
         result = extract_json(response, expect="object")
-        if not result or "scenarios" not in result:
-            return []
-        return result.get("scenarios", [])
-
-    def _run_scenario(self, image_tag: str, scenario: dict, timeout: int = 30) -> dict:
-        """Voer één scenario uit in de Docker container."""
-        cmd = ["docker", "run", "--rm", image_tag, "python", "-m", "src.main"]
-        cmd.extend(scenario.get("args", []))
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            return {
-                "name": scenario.get("name", "unnamed"),
-                "exit_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "args": scenario.get("args", [])
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "name": scenario.get("name", "unnamed"),
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": "TIMEOUT",
-                "args": scenario.get("args", [])
-            }
-        except Exception as e:
-            return {
-                "name": scenario.get("name", "unnamed"),
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": str(e),
-                "args": scenario.get("args", [])
-            }
-
-    def _evaluate_scenario(self, scenario: dict, run_result: dict) -> dict:
-        """Check of het run resultaat aan de verwachtingen voldoet."""
-        passed = True
-        reasons = []
-
-        # Exit code check
-        if scenario.get("expect_no_error", True) and run_result["exit_code"] != 0:
-            passed = False
-            reasons.append(f"exit code {run_result['exit_code']} (verwacht 0)")
-
-        # Crash check (altijd, ongeacht expect_no_error)
-        stderr_lower = run_result.get("stderr", "").lower()
-        crash_keywords = ["traceback", "modulenotfounderror", "syntaxerror", "importerror", "indentationerror"]
-        for kw in crash_keywords:
-            if kw in stderr_lower:
-                passed = False
-                reasons.append(f"crash gedetecteerd: {kw}")
-                break
-
-        # Expected strings in stdout
-        stdout = run_result.get("stdout", "")
-        for expected in scenario.get("expect_in_stdout", []):
-            if expected.lower() not in stdout.lower():
-                passed = False
-                reasons.append(f"missing in output: '{expected}'")
-
-        return {
-            "passed": passed,
-            "reasons": reasons,
-            "scenario_name": scenario.get("name", "unnamed")
-        }
-
-    def run(self, plan: dict, build_result: dict) -> dict:
-        """Hoofdfunctie: genereer scenarios, draai ze, oordeel."""
-        project_path = Path(build_result["project_path"])
-        project_name = project_path.name
-        image_tag = f"ai-factory/{project_name}:test"
-
-        print(f"\n[functional] genereer test scenarios...")
-        scenarios = self._generate_scenarios(plan, project_path)
+        scenarios = result.get("scenarios", []) if result else []
 
         if not scenarios:
-            print("[functional] geen scenarios gegenereerd, skip")
             return {"passed": True, "scenarios_run": 0, "results": []}
 
-        print(f"[functional] {len(scenarios)} scenarios uitvoeren...")
         results = []
         all_passed = True
 
         for scenario in scenarios:
-            print(f"[functional] - {scenario.get('name', 'unnamed')}")
-            run_result = self._run_scenario(image_tag, scenario)
-            evaluation = self._evaluate_scenario(scenario, run_result)
+            cmd = ["docker", "run", "--rm", image_tag, "python", "-m", "src.main"]
+            cmd.extend(scenario.get("args", []))
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                run_result = {
+                    "exit_code": r.returncode,
+                    "stdout": r.stdout,
+                    "stderr": r.stderr
+                }
+            except subprocess.TimeoutExpired:
+                run_result = {"exit_code": -1, "stdout": "", "stderr": "TIMEOUT"}
+
+            passed = True
+            reasons = []
+            if scenario.get("expect_no_error", True) and run_result["exit_code"] != 0:
+                passed = False
+                reasons.append(f"exit code {run_result['exit_code']}")
+
+            stderr_lower = run_result["stderr"].lower()
+            if any(kw in stderr_lower for kw in ["traceback", "modulenotfounderror", "syntaxerror", "importerror"]):
+                passed = False
+                reasons.append("crash detected")
+
+            for expected in scenario.get("expect_in_stdout", []):
+                if expected.lower() not in run_result["stdout"].lower():
+                    passed = False
+                    reasons.append(f"missing: '{expected}'")
+
+            if not passed:
+                all_passed = False
+                print(f"[functional]   FAIL: {scenario.get('name')}: {reasons}")
+            else:
+                print(f"[functional]   OK: {scenario.get('name')}")
+
             results.append({
                 "scenario": scenario,
                 "run": run_result,
-                "evaluation": evaluation
+                "evaluation": {"passed": passed, "reasons": reasons, "scenario_name": scenario.get("name", "")}
             })
-            if not evaluation["passed"]:
-                all_passed = False
-                print(f"[functional]   FAIL: {evaluation['reasons']}")
-            else:
-                print(f"[functional]   OK")
 
-        return {
-            "passed": all_passed,
-            "scenarios_run": len(scenarios),
-            "results": results
-        }
+        return {"passed": all_passed, "scenarios_run": len(results), "results": results}
+
+    def run(self, plan: dict, build_result: dict) -> dict:
+        project_path = Path(build_result["project_path"])
+        project_name = project_path.name
+        image_tag = f"ai-factory/{project_name}:test"
+        is_service = build_result.get("is_web_app", False) or plan.get("is_service", False)
+
+        if is_service:
+            # Lees Dockerfile om de poort te vinden
+            dockerfile = project_path / "Dockerfile"
+            port = 8000
+            if dockerfile.exists():
+                content = dockerfile.read_text()
+                import re
+                m = re.search(r"EXPOSE\s+(\d+)", content)
+                if m:
+                    port = int(m.group(1))
+
+            print(f"\n[functional] testing as SERVICE on port {port}")
+            return self._run_service_tests(plan, image_tag, port)
+        else:
+            print(f"\n[functional] testing as CLI tool")
+            return self._run_cli_tests(plan, project_path, image_tag)
