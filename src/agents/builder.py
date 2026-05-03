@@ -69,9 +69,9 @@ class BuilderAgent:
 
         # 3. requirements.txt - met gegarandeerde dependencies
         req_path = project_path / "requirements.txt"
-        existing_reqs = []
-        if req_path.exists():
-            existing_reqs = [line.strip() for line in req_path.read_text().splitlines() if line.strip()]
+        # We rebuilden requirements.txt VANAF NUL elke keer
+        # Dit voorkomt dat oude/corrupte lines blijven hangen tussen retries
+        existing_reqs = []  # bewust niet meer lezen van schijf
 
         plan_reqs = plan.get("requirements", [])
         guaranteed_test_deps = [
