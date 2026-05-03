@@ -75,12 +75,14 @@ class BuilderAgent:
 
         plan_reqs = plan.get("requirements", [])
         guaranteed_test_deps = [
-            "pytest", "httpx",
+            "pytest", "pytest-asyncio>=0.21", "pytest-cov", "httpx",
             # Service template dependencies
             "fastapi", "uvicorn", "pydantic-settings>=2.0",
             "structlog", "prometheus-client>=0.20",
             # Iteration 2: security + resilience
             "slowapi", "redis"
+            # Iteration 3: testing + docs
+            "email-validator"
         ]
         all_reqs = list(existing_reqs) + list(plan_reqs)
         for dep in guaranteed_test_deps:
@@ -97,6 +99,41 @@ class BuilderAgent:
 
         req_path.write_text("\n".join(final_reqs) + "\n")
         written.append(str(req_path))
+
+        # 3b. pyproject.toml met pytest + coverage configuratie
+        if plan.get("is_service", True):
+            template_pyproject = Path(__file__).parent.parent / "service_template" / "pyproject_template.toml"
+            if template_pyproject.exists():
+                target_pyproject = project_path / "pyproject.toml"
+                target_pyproject.write_text(template_pyproject.read_text())
+                written.append(str(target_pyproject))
+
+        # 3c. tests/conftest.py met shared fixtures
+        if plan.get("is_service", True):
+            tests_dir = project_path / "tests"
+            tests_dir.mkdir(parents=True, exist_ok=True)
+            conftest_path = tests_dir / "conftest.py"
+            conftest_path.write_text('''"""Shared test fixtures (auto-generated)."""
+from src.service_template.test_fixtures import client, anyio_backend, auth_headers, reset_settings  # noqa: F401
+''')
+            written.append(str(conftest_path))
+
+        # 3d. tests/test_template_contract.py met standaard contract tests
+        if plan.get("is_service", True):
+            template_contract = Path(__file__).parent.parent / "service_template" / "contract_tests.py"
+            if template_contract.exists():
+                target_contract = project_path / "tests" / "test_template_contract.py"
+                # Kopieer maar zonder de docstring header van het template-bestand
+                content = template_contract.read_text()
+                target_contract.write_text(content)
+                written.append(str(target_contract))
+
+        # 3e. ADR.md met architectuur-beslissingen
+        if plan.get("is_service", True):
+            from src.service_template.adr_template import generate_adr
+            adr_path = project_path / "ADR.md"
+            adr_path.write_text(generate_adr(project_name, plan.get("description", "")))
+            written.append(str(adr_path))
 
         # 4. .env.example en lege .env
         env_example = project_path / ".env.example"

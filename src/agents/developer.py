@@ -89,6 +89,28 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
      async def my_endpoint(request: Request, ...):
    - GEEN custom auth, CORS of rate limiting code schrijven - gebruik het template
 
+0c. TESTING DISCIPLINE (kritisch - 80% coverage gate):
+   - Elke business module (logic.py, routes.py, etc.) MOET tests hebben
+   - Coverage gate is 80% van src/ (uitgesloten: src/main.py en src/service_template/)
+   - Test bestanden moeten een 'test_' prefix hebben en in tests/ staan
+   - GEBRUIK de standaard fixtures uit tests/conftest.py:
+     * 'client': TestClient voor HTTP integration tests
+     * 'auth_headers': dict met Bearer token voor secure endpoints
+   - Schrijf 3 soorten tests:
+     1. Unit tests: test pure functies in logic.py zonder FastAPI
+     2. Integration tests: test endpoints via 'client' fixture
+     3. Edge cases: lege input, ongeldige format, grenswaarden
+   - GEEN dummy tests die alleen "assert True" doen
+   - Test ELKE error path: ongeldige input → 422, niet gevonden → 404, etc.
+   - Voorbeeld goede test:
+     def test_convert_returns_correct_rgb(client):
+         r = client.post("/convert", json={"hex": "#FF0000"})
+         assert r.status_code == 200
+         assert r.json()["rgb"] == {"r": 255, "g": 0, "b": 0}
+     def test_convert_rejects_invalid_hex(client):
+         r = client.post("/convert", json={"hex": "ZZZ"})
+         assert r.status_code == 422
+
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/

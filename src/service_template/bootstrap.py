@@ -60,8 +60,16 @@ def create_app(
     app = FastAPI(
         title=title or settings.service_name,
         version=version or settings.service_version,
+        description=f"Auto-generated microservice ({settings.environment} environment)",
+        contact={"name": "AI Software Factory", "email": "ops@ai-factory.local"},
+        license_info={"name": "Internal", "url": "https://github.com/davidvanc/ai-factory"},
+        openapi_tags=[
+            {"name": "health", "description": "Liveness and readiness probes"},
+            {"name": "metrics", "description": "Prometheus metrics endpoint"},
+        ],
         lifespan=lifespan,
     )
+
     app.state.service_name = settings.service_name
 
     # Rate limiting
