@@ -80,7 +80,7 @@ class BuilderAgent:
             "fastapi", "uvicorn", "pydantic-settings>=2.0",
             "structlog", "prometheus-client>=0.20",
             # Iteration 2: security + resilience
-            "slowapi", "redis"
+            "slowapi", "redis",
             # Iteration 3: testing + docs
             "email-validator"
         ]
