@@ -104,11 +104,12 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Test ELKE error path: ongeldige input → 422, niet gevonden → 404, etc.
    - Voorbeeld goede test:
      def test_convert_returns_correct_rgb(client):
-         r = client.post("/convert", json={"hex": "#FF0000"})
+         r = client.post("/convert", json=dict(hex="#FF0000"))
          assert r.status_code == 200
-         assert r.json()["rgb"] == {"r": 255, "g": 0, "b": 0}
+         body = r.json()
+         assert body["rgb"]["r"] == 255
      def test_convert_rejects_invalid_hex(client):
-         r = client.post("/convert", json={"hex": "ZZZ"})
+         r = client.post("/convert", json=dict(hex="ZZZ"))
          assert r.status_code == 422
 
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
