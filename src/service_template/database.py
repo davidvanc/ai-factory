@@ -50,22 +50,30 @@ async def init_database():
         return
 
     db_url = settings.database_url
-    # Forceer asyncpg driver indien postgres protocol
+    # Forceer async driver indien geen async-prefix is gegeven
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
     elif db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif db_url.startswith("sqlite:///"):
+        db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
 
     log.info("database_initializing", mode=settings.database_mode, pool_size=settings.database_pool_size)
 
-    _engine = create_async_engine(
-        db_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_pool_max_overflow,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-        echo=settings.database_echo,
-    )
+    engine_kwargs = {
+        "echo": settings.database_echo,
+    }
+    # Pool args alleen voor echte DBs, niet voor SQLite
+    if not db_url.startswith("sqlite"):
+        engine_kwargs.update({
+            "pool_size": settings.database_pool_size,
+            "max_overflow": settings.database_pool_max_overflow,
+            "pool_pre_ping": True,
+            "pool_recycle": 3600,
+        })
+
+    _engine = create_async_engine(db_url, **engine_kwargs)
+
     _SessionLocal = async_sessionmaker(
         bind=_engine,
         class_=AsyncSession,
