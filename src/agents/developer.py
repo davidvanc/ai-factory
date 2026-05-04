@@ -132,7 +132,7 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
          customer = Customer(name=payload.name)
          db.add(customer)
          await db.flush()
-         return {"id": customer.id, "name": customer.name}
+         return dict(id=customer.id, name=customer.name)
    - VOOR DE EERSTE RUN: Alembic migraties zijn al ingesteld - maak een initial migration:
      De Tester verwacht dat tabellen bestaan. Voeg in src/models.py een init_models() async functie toe
      die Base.metadata.create_all gebruikt voor TESTS. In productie gebruik je Alembic.
