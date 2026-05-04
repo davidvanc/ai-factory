@@ -53,6 +53,17 @@ class ServiceSettings(BaseSettings):
     max_request_body_bytes: int = Field(default=1_048_576, description="Max request body size (1MB default)")
     request_timeout_seconds: float = Field(default=30.0, ge=1.0, description="Hard timeout per request")
 
+    # Database
+    database_enabled: bool = Field(default=False, description="Enable Postgres database connection")
+    database_mode: Literal["shared", "local"] = Field(default="local", description="shared=centrale DB, local=per-service")
+    database_url: str = Field(
+        default="postgresql://factory_admin:changeme@localhost:5432/factory_main",
+        description="Async-compatible Postgres URL"
+    )
+    database_pool_size: int = Field(default=5, ge=1, le=50)
+    database_pool_max_overflow: int = Field(default=10, ge=0, le=50)
+    database_echo: bool = Field(default=False, description="Log alle SQL queries (debug)")
+
     @property
     def auth_tokens_set(self) -> set:
         return {t.strip() for t in self.auth_tokens.split(",") if t.strip()}

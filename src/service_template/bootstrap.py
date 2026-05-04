@@ -53,9 +53,24 @@ def create_app(
                  environment=settings.environment,
                  port=settings.port,
                  auth_enabled=settings.auth_enabled,
-                 rate_limit_enabled=settings.rate_limit_enabled)
+                 rate_limit_enabled=settings.rate_limit_enabled,
+                 database_enabled=settings.database_enabled)
+
+        # Database setup
+        if settings.database_enabled:
+            await init_database()
+            # Voeg automatisch DB readiness check toe
+            existing_checks = readiness_checks or {}
+            if "database" not in existing_checks:
+                existing_checks["database"] = database_health_check
+            app.state.readiness_checks = existing_checks
+
         yield
-        log.info("service_stopping", service=settings.service_name)
+
+        # Graceful shutdown
+        if settings.database_enabled:
+            await close_database()
+        log.info("service_stopping", service=settings.service_name) 
 
     app = FastAPI(
         title=title or settings.service_name,

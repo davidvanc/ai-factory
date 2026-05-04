@@ -73,6 +73,9 @@ class BuilderAgent:
         # Dit voorkomt dat oude/corrupte lines blijven hangen tussen retries
         existing_reqs = []  # bewust niet meer lezen van schijf
 
+        # Bepaal of database deps en setup nodig zijn (gebruikt verderop)
+        needs_db = plan.get("database_enabled", False) or plan.get("needs_database", False)
+
         plan_reqs = plan.get("requirements", [])
         guaranteed_test_deps = [
             "pytest", "pytest-asyncio>=0.21", "pytest-cov", "httpx",
@@ -82,8 +85,16 @@ class BuilderAgent:
             # Iteration 2: security + resilience
             "slowapi", "redis",
             # Iteration 3: testing + docs
-            "email-validator"
+            "email-validator",
         ]
+
+        # Iteration 4: database deps - alleen als service DB gebruikt
+        if needs_db and plan.get("is_service", True):
+            guaranteed_test_deps.extend([
+                "sqlalchemy[asyncio]>=2.0",
+                "asyncpg",
+                "alembic",
+            ])
         all_reqs = list(existing_reqs) + list(plan_reqs)
         for dep in guaranteed_test_deps:
             if not any(r.split("==")[0].split(">=")[0].split("<=")[0].strip() == dep for r in all_reqs):
@@ -135,6 +146,11 @@ from src.service_template.test_fixtures import client, anyio_backend, auth_heade
             adr_path.write_text(generate_adr(project_name, plan.get("description", "")))
             written.append(str(adr_path))
 
+        # 3f. Alembic setup als service een database gebruikt
+        if needs_db and plan.get("is_service", True):
+            from src.service_template.alembic_helper import generate_alembic_setup
+            written.extend(generate_alembic_setup(project_path))
+
         # 4. .env.example en lege .env
         env_example = project_path / ".env.example"
         env_example.write_text("# Vul in en hernoem naar .env\n# Geen echte secrets committen!\n")
@@ -174,6 +190,9 @@ ENV ALLOWED_ORIGINS=*
 ENV RATE_LIMIT_ENABLED=false
 ENV RATE_LIMIT_PER_MINUTE=60
 ENV RATE_LIMIT_REDIS_URL=redis://localhost:6379/1
+ENV DATABASE_ENABLED={str(needs_db).lower()}
+ENV DATABASE_MODE=local
+ENV DATABASE_URL=postgresql://factory_admin:changeme@localhost:5432/factory_main
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

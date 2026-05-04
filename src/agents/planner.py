@@ -75,11 +75,17 @@ REGELS VOOR ENDPOINTS:
 - Voor input: gebruik query parameters (eenvoudige data) of JSON body (complexere data)
 - Output: altijd JSON
 
+DATABASE BESLISSING (kritisch):
+- Stel needs_database=true ALS de service data moet bewaren tussen requests of users (klanten, orders, geschiedenis, audit logs)
+- Stel needs_database=false voor STATELESS services (calculators, converters, generators, formatters)
+- Bij twijfel: false (we kunnen later toevoegen)
+
 JSON STRUCTUUR:
 {{
   "project_name": "korte_naam_zonder_spaties",
   "description": "wat de service doet",
   "is_service": true,
+  "needs_database": false,
   "structure": [
     "src/main.py",
     "src/routes.py",

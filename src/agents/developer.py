@@ -112,6 +112,32 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
          r = client.post("/convert", json=dict(hex="ZZZ"))
          assert r.status_code == 422
 
+0d. DATABASE GEBRUIK (alleen als needs_database=true in plan):
+   - Database komt via SQLAlchemy 2.0 async API uit het service_template
+   - Definieer je eigen models in src/models.py:
+     from src.service_template.database import Base
+     from sqlalchemy import Column, String, DateTime, Integer
+     from datetime import datetime
+     class Customer(Base):
+         __tablename__ = "customers"
+         id = Column(Integer, primary_key=True, autoincrement=True)
+         name = Column(String(200), nullable=False)
+         created_at = Column(DateTime, default=datetime.utcnow)
+   - In endpoints: gebruik de get_db dependency:
+     from fastapi import Depends
+     from sqlalchemy.ext.asyncio import AsyncSession
+     from src.service_template.database import get_db
+     @router.post("/customers")
+     async def create_customer(payload: CustomerIn, db: AsyncSession = Depends(get_db)):
+         customer = Customer(name=payload.name)
+         db.add(customer)
+         await db.flush()
+         return {"id": customer.id, "name": customer.name}
+   - VOOR DE EERSTE RUN: Alembic migraties zijn al ingesteld - maak een initial migration:
+     De Tester verwacht dat tabellen bestaan. Voeg in src/models.py een init_models() async functie toe
+     die Base.metadata.create_all gebruikt voor TESTS. In productie gebruik je Alembic.
+   - Voor TESTS: gebruik een aparte test-database of in-memory SQLite via TestClient fixtures
+
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/
