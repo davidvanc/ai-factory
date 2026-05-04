@@ -32,7 +32,7 @@ from src.service_template.resilience import (
     security_headers_middleware,
 )
 from src.service_template.rate_limit import limiter
-
+from src.service_template.database import init_database, close_database, database_health_check
 
 def create_app(
     title: str = None,
