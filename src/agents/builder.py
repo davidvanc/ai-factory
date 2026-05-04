@@ -124,7 +124,7 @@ class BuilderAgent:
             tests_dir.mkdir(parents=True, exist_ok=True)
             conftest_path = tests_dir / "conftest.py"
             conftest_path.write_text('''"""Shared test fixtures (auto-generated)."""
-from src.service_template.test_fixtures import client, anyio_backend, auth_headers, reset_settings, _ensure_tables  # noqa: F401
+from src.service_template.test_fixtures import client, anyio_backend, auth_headers, reset_settings  # noqa: F401
 ''')
             written.append(str(conftest_path))
 

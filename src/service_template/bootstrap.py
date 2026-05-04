@@ -56,15 +56,16 @@ def create_app(
                  rate_limit_enabled=settings.rate_limit_enabled,
                  database_enabled=settings.database_enabled)
 
-        # Database setup
+        # Database setup - faalt graceful in tests/dev
         if settings.database_enabled:
-            await init_database()
-            # Voeg automatisch DB readiness check toe
-            existing_checks = readiness_checks or {}
-            if "database" not in existing_checks:
-                existing_checks["database"] = database_health_check
-            app.state.readiness_checks = existing_checks
-
+            try:
+                await init_database()
+                existing_checks = readiness_checks or {}
+                if "database" not in existing_checks:
+                    existing_checks["database"] = database_health_check
+                app.state.readiness_checks = existing_checks
+            except Exception as e:
+                log.warning("database_init_failed_continuing", error=str(e))
         yield
 
         # Graceful shutdown

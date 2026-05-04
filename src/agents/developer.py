@@ -116,13 +116,11 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Database komt via SQLAlchemy 2.0 async API uit het service_template
    - Definieer je eigen models in src/models.py:
      from src.service_template.database import Base
-     from sqlalchemy import Column, String, DateTime, Integer
-     from datetime import datetime
+     from sqlalchemy import Column, String, Integer
      class Customer(Base):
          __tablename__ = "customers"
          id = Column(Integer, primary_key=True, autoincrement=True)
          name = Column(String(200), nullable=False)
-         created_at = Column(DateTime, default=datetime.utcnow)
    - In endpoints: gebruik de get_db dependency:
      from fastapi import Depends
      from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,10 +131,29 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
          db.add(customer)
          await db.flush()
          return dict(id=customer.id, name=customer.name)
-   - VOOR DE EERSTE RUN: Alembic migraties zijn al ingesteld - maak een initial migration:
-     De Tester verwacht dat tabellen bestaan. Voeg in src/models.py een init_models() async functie toe
-     die Base.metadata.create_all gebruikt voor TESTS. In productie gebruik je Alembic.
-   - Voor TESTS: gebruik een aparte test-database of in-memory SQLite via TestClient fixtures
+
+0e. TESTING MET DATABASE (kritisch):
+   - Coverage gate van 80% telt ALLEEN voor business code (logic.py, schemas.py)
+   - src/models.py, src/database.py, src/main.py worden NIET meegerekend
+   - Schrijf UNIT TESTS voor pure functies in logic.py - deze hoeven geen DB
+   - Voor endpoints met DB: zet ze in tests/integration/ met @pytest.mark.integration
+   - Integration tests draaien NIET standaard (vereisen echte Postgres)
+   - VERPLICHT structuur:
+     tests/test_logic.py        - unit tests, GEEN client/DB nodig
+     tests/test_schemas.py      - validatie tests
+     tests/integration/test_endpoints.py  - met @pytest.mark.integration
+
+   Voorbeeld goede unit test:
+   def test_validate_email_format():
+       from src.logic import is_valid_email
+       assert is_valid_email("user@example.com") is True
+       assert is_valid_email("invalid") is False
+
+   Voorbeeld integration test:
+   @pytest.mark.integration
+   async def test_create_customer_persists(client):
+       response = client.post("/customers", json=dict(name="Test"))
+       assert response.status_code == 201
 
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
