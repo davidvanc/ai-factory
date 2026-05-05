@@ -54,7 +54,7 @@ class TesterAgent:
         print("[tester] 2/3 pytest...")
         test = self._run(
             ["docker", "run", "--rm", "--entrypoint", "", image_tag,
-             "python", "-m", "pytest", "tests/", "-v"],
+             "python", "-m", "pytest", "tests/", "-v", "-p", "no:cacheprovider"],
             timeout=300
         )
         results["steps"].append({"name": "pytest", **test})
