@@ -172,33 +172,78 @@ from src.service_template.test_fixtures import client, anyio_backend, auth_heade
             expose_line = ""
 
         dockerfile = project_path / "Dockerfile"
-        dockerfile_content = f"""FROM python:3.11-slim
+
+        dockerfile_content = f"""# syntax=docker/dockerfile:1.7
+# Multi-stage build for smaller production images and security
+
+# === Stage 1: builder ===
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build deps only in builder stage
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    gcc \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Install requirements in /opt/venv (a dedicated venv we'll copy)
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \\
+    pip install --no-cache-dir -r requirements.txt
+
+# === Stage 2: runtime ===
+FROM python:3.11-slim AS runtime
+
+# Create non-root user
+RUN groupadd --system --gid 1001 appuser && \\
+    useradd --system --uid 1001 --gid appuser --shell /sbin/nologin --no-create-home appuser
+
+# Copy venv from builder
+COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
+
+ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Service identity (overridable per environment)
 ENV SERVICE_NAME={project_name}
 ENV SERVICE_VERSION=0.1.0
 ENV PORT={port}
 ENV ENVIRONMENT=dev
 ENV LOG_FORMAT=json
 ENV LOG_LEVEL=INFO
+
+# Security defaults (overridable per environment)
 ENV AUTH_ENABLED=false
 ENV AUTH_TOKENS=
 ENV ALLOWED_ORIGINS=*
 ENV RATE_LIMIT_ENABLED=false
 ENV RATE_LIMIT_PER_MINUTE=60
 ENV RATE_LIMIT_REDIS_URL=redis://localhost:6379/1
-ENV DATABASE_ENABLED={str(needs_db).lower()}
-ENV DATABASE_MODE=local
-ENV DATABASE_URL=postgresql://factory_admin:changeme@localhost:5432/factory_main
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ENV DATABASE_ENABLED=false
+ENV DATABASE_URL=postgresql://user:pass@localhost:5432/db
 
-COPY . .
+# Copy app code
+COPY --chown=appuser:appuser . .
 
-{expose_line}CMD {entry_cmd}
+# Drop privileges
+USER appuser
+
+# Healthcheck - Docker knows when service is ready
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:{port}/health', timeout=3)" || exit 1
+
+EXPOSE {port}
+
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]
 """
+
         dockerfile.write_text(dockerfile_content)
         written.append(str(dockerfile))
 
@@ -218,6 +263,69 @@ COPY . .
             written.append(str(compose_path))
         elif compose_path.exists():
             compose_path.unlink()
+
+        # 6b. docker-compose.prod.yml - productie configuratie met resource limits, secrets, restart policy
+        if is_web_app:
+            compose_prod_path = project_path / "docker-compose.prod.yml"
+            compose_prod_content = f"""# Production docker-compose - override defaults via .env file or environment
+# Run with: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  app:
+    image: ${{IMAGE_REPO:-ai-factory}}/{project_name}:${{IMAGE_TAG:-latest}}
+    restart: unless-stopped
+
+    # Read configuration from environment (12-factor)
+    environment:
+      ENVIRONMENT: ${{ENVIRONMENT:-prod}}
+      LOG_LEVEL: ${{LOG_LEVEL:-INFO}}
+      LOG_FORMAT: ${{LOG_FORMAT:-json}}
+      AUTH_ENABLED: ${{AUTH_ENABLED:-true}}
+      AUTH_TOKENS: ${{AUTH_TOKENS:?AUTH_TOKENS must be set in production}}
+      ALLOWED_ORIGINS: ${{ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set in production}}
+      RATE_LIMIT_ENABLED: ${{RATE_LIMIT_ENABLED:-true}}
+      RATE_LIMIT_PER_MINUTE: ${{RATE_LIMIT_PER_MINUTE:-60}}
+      RATE_LIMIT_REDIS_URL: ${{RATE_LIMIT_REDIS_URL:-redis://redis:6379/1}}
+      DATABASE_ENABLED: ${{DATABASE_ENABLED:-false}}
+      DATABASE_URL: ${{DATABASE_URL:-}}
+
+    ports:
+      - "${{HOST_PORT:-{port}}}:{port}"
+
+    # Resource limits prevent runaway containers from eating the host
+    deploy:
+      resources:
+        limits:
+          cpus: "${{CPU_LIMIT:-1.0}}"
+          memory: ${{MEMORY_LIMIT:-512M}}
+        reservations:
+          cpus: "${{CPU_RESERVATION:-0.25}}"
+          memory: ${{MEMORY_RESERVATION:-128M}}
+
+    # Security: read-only filesystem, no privilege escalation
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64M
+
+    # Wait until /health passes before considering ready
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:{port}/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    # Centralized logging (uncomment when shipping logs)
+    # logging:
+    #   driver: "syslog"
+    #   options:
+    #     syslog-address: "udp://logs.example.com:514"
+    #     tag: "{{{{.Name}}}}"
+"""
+            compose_prod_path.write_text(compose_prod_content)
+            written.append(str(compose_prod_path))
 
         # 7. README.md
         readme_path = project_path / "README.md"
@@ -312,6 +420,124 @@ cp .env.example .env
 """
         readme_path.write_text(readme_content)
         written.append(str(readme_path))
+
+        # 7a. GitHub Actions CI/CD workflow
+        gha_dir = project_path / ".github" / "workflows"
+        gha_dir.mkdir(parents=True, exist_ok=True)
+        gha_workflow = gha_dir / "ci.yml"
+        gha_workflow.write_text(f"""name: CI - {project_name}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'output/{project_name}/**'
+  pull_request:
+    paths:
+      - 'output/{project_name}/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: output/{project_name}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov-fail-under=80
+        env:
+          AUTH_ENABLED: "false"
+          RATE_LIMIT_ENABLED: "false"
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: output/{project_name}
+          push: false
+          tags: ai-factory/{project_name}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+""")
+        written.append(str(gha_workflow))
+
+        # 7b. .dockerignore - kleinere image, geen tests/cache in image
+        dockerignore = project_path / ".dockerignore"
+        dockerignore.write_text("""# Tests and dev files
+tests/
+*.test.py
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docs
+*.md
+docs/
+ADR.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Local env
+.env
+.env.local
+""")
+        written.append(str(dockerignore))
 
         # 8. .gitignore
         gitignore = project_path / ".gitignore"
