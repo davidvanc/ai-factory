@@ -28,7 +28,6 @@ omit = [
     "*/__init__.py",
     "*/tests/*",
 ]
-branch = true
 
 branch = true
 
