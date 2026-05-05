@@ -487,9 +487,8 @@ jobs:
 
         # 7b. .dockerignore - kleinere image, geen tests/cache in image
         dockerignore = project_path / ".dockerignore"
-        dockerignore.write_text("""# Tests and dev files
-tests/
-*.test.py
+        dockerignore.write_text("""# NOTE: tests/ is INCLUDED in test image (Tester runs pytest in container)
+# For production builds, use a multi-stage Dockerfile or build flag to exclude tests
 .pytest_cache/
 .coverage
 coverage.xml
