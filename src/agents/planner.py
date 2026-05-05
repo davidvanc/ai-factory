@@ -75,10 +75,12 @@ REGELS VOOR ENDPOINTS:
 - Voor input: gebruik query parameters (eenvoudige data) of JSON body (complexere data)
 - Output: altijd JSON
 
-DATABASE BESLISSING (kritisch):
-- Stel needs_database=true ALS de service data moet bewaren tussen requests of users (klanten, orders, geschiedenis, audit logs)
-- Stel needs_database=false voor STATELESS services (calculators, converters, generators, formatters)
-- Bij twijfel: false (we kunnen later toevoegen)
+DATABASE BESLISSING:
+- needs_database=false is de DEFAULT voor onze factory
+- Database-services worden HANDMATIG geschreven, NIET via factory
+- Alleen als de gebruiker EXPLICIET vraagt om een database EN je 100% zeker bent: needs_database=true
+- Bij elke andere taak: needs_database=false (zelfs als state normaal nodig zou zijn)
+- We kunnen state simuleren met in-memory dicts voor demos
 
 JSON STRUCTUUR:
 {{
