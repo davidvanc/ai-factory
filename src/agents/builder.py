@@ -152,9 +152,16 @@ from src.service_template.test_fixtures import client, anyio_backend, auth_heade
         if is_web_app:
             entry_cmd = f'["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "{port}"]'
             expose_line = f"EXPOSE {port}\n"
+            healthcheck_line = (
+                "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 "
+                f"CMD python -c \"import urllib.request,sys; "
+                f"resp=urllib.request.urlopen('http://localhost:{port}/health',timeout=2); "
+                f"sys.exit(0 if resp.status==200 else 1)\"\n"
+            )
         else:
             entry_cmd = '["python", "-m", "src.main"]'
             expose_line = ""
+            healthcheck_line = ""
 
         dockerfile = project_path / "Dockerfile"
         dockerfile_content = f"""FROM python:3.11-slim
@@ -179,7 +186,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-{expose_line}CMD {entry_cmd}
+{expose_line}{healthcheck_line}CMD {entry_cmd}
 """
         dockerfile.write_text(dockerfile_content)
         written.append(str(dockerfile))
