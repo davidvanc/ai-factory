@@ -55,6 +55,26 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             fb["previous_files"] = prev_dev.get("files", [])
         return fb
 
+    def _tester_failure_context(feedback):
+        """Structured failure context voor logging na tester-failure."""
+        return {
+            "phase": "tester",
+            "issues": feedback["issues"],
+            "test_output_excerpt": feedback["test_output"][-1500:],
+        }
+
+    def _judge_failure_context(verdict):
+        """Structured failure context voor logging na judge-rejection."""
+        return {
+            "phase": "judge_rejected",
+            "verdict_reason": verdict.get("verdict_reason"),
+            "failing_criteria": [
+                {"name": c, "reason": verdict.get(c, {}).get("reason", "")}
+                for c in ["functional_match", "security", "documentation", "code_quality"]
+                if not verdict.get(c, {}).get("pass", True)
+            ],
+        }
+
     try:
         # PLANNER
         plan = PlannerAgent().run(task)
@@ -101,6 +121,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 if len(passing_history) >= 2 and passing_history[-1] <= passing_history[-2]:
                     no_progress += 1
                 feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
+                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _tester_failure_context(feedback)
                 continue
 
             tests_ok = True
@@ -116,6 +137,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 break
 
             feedback = build_feedback(test_result, verdict, dev_result)
+            run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _judge_failure_context(verdict)
             break  # tests OK, ga naar fase 2
 
         # FASE 2: Judge loop
@@ -133,6 +155,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
                 if not test_result["passed"]:
                     feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
+                    run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _tester_failure_context(feedback)
                     continue
 
                 verdict = JudgeAgent().run(plan, build_result, test_result)
@@ -144,6 +167,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                     break
 
                 feedback = build_feedback(test_result, verdict, dev_result)
+                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _judge_failure_context(verdict)
 
         # Resultaat
         status = "success" if approved else "failed"
@@ -185,11 +209,16 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         }
 
     except Exception as e:
+        import traceback
         run_log["status"] = "error"
         run_log["error"] = str(e)
+        run_log["error_type"] = type(e).__name__
+        run_log["traceback"] = traceback.format_exc()
+        run_log["error_during_attempt"] = locals().get("attempt", 0)
         run_log["end"] = datetime.now().isoformat()
         log_file.write_text(json.dumps(run_log, indent=2, default=str))
         return {"status": "error", "error": str(e), "log_file": str(log_file)}
+
 
 def _push_to_git(project_name: str, attempt: int, max_retries: int = 5):
     """Push gegenereerde output naar GitHub met retry bij race conditions.
