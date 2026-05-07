@@ -8,35 +8,55 @@ class DeveloperAgent:
     def run(self, plan: dict, feedback: dict = None, role_override: str = "developer") -> dict:
         feedback_section = ""
         if feedback:
-            feedback_section = ""
-        if feedback:
             previous_code = ""
             if feedback.get("previous_files"):
-                previous_code = "\n\n=== JOUW VORIGE CODE (de basis voor je nieuwe versie) ===\n"
+                previous_code = "\n\n=== JE VORIGE CODE (kopieer letterlijk over wat je niet hoeft te wijzigen) ===\n"
                 for f in feedback["previous_files"]:
                     previous_code += f"\n--- {f['path']} ---\n{f['content']}\n"
 
+            # Onderscheid tester-fail vs judge-rejection
+            summary = feedback.get('summary', '') or ''
+            is_judge_rejection = 'Tests failed' not in summary
+
+            preservation_block = """
+🚨 RETRY MODE — LEES DIT EERST EN ZORGVULDIG 🚨
+
+Dit is GEEN nieuwe taak. Je hebt eerder al een (deels) werkende versie geschreven. Je taak NU is
+NIET die versie opnieuw schrijven, maar ALLEEN de specifieke gerapporteerde problemen oplossen.
+
+ABSOLUTE REGELS (overtreden = falen):
+1. Files die NIET in de feedback genoemd worden: kopieer ze BIT-VOOR-BIT identiek over uit je vorige code.
+   Geen renames, geen formatting changes, geen "verbeteringen" — letterlijk dezelfde bytes.
+2. Files die WÉL problemen hebben: wijzig alleen de specifieke regels of functies die nodig zijn
+   om de gerapporteerde failures op te lossen. Laat al het andere ongemoeid.
+3. Tests die eerder slaagden, MOETEN nu ook slagen. Als jouw nieuwe versie ook maar één
+   eerder-slagende test breekt, heb je gefaald — ongeacht of de gemelde issues opgelost zijn.
+4. Voeg GEEN nieuwe features, endpoints of tests toe die niet in het plan staan.
+5. Bij twijfel "fix versus herschrijf": kies altijd fixen.
+"""
+
+            if is_judge_rejection:
+                preservation_block += """
+⚠️ EXTRA: in je vorige poging slaagden ALLE tests. De Judge heeft alleen kwaliteits-issues gemarkeerd.
+   Los die op ZONDER ook maar één test te breken. Test-compatibiliteit is hard requirement, niet optioneel.
+"""
+
             feedback_section = f"""
+{preservation_block}
 
-=== EERDERE POGING FAALDE ===
-Je hebt deze code al eerder geschreven. Hij faalde om deze redenen:
+=== GERAPPORTEERDE PROBLEMEN ===
+Samenvatting: {feedback.get('summary', 'Geen samenvatting')}
 
-{feedback.get('summary', 'Geen samenvatting')}
-
-Specifieke problemen:
+Specifieke issues:
 {json.dumps(feedback.get('issues', []), indent=2, ensure_ascii=False)}
 
 Test output (laatste 3000 chars):
 {feedback.get('test_output', 'Geen test output')[:3000]}
 {previous_code}
 
-KRITISCH: Behoud zoveel mogelijk van je vorige code. Pas ALLEEN aan wat nodig is om de fouten op te lossen.
-- Schrijf NIET alles opnieuw vanaf nul
-- Schrijf NIET nieuwe tests of features die niet in het plan staan
-- Fix specifiek de gerapporteerde problemen
-- Behoud bestaande logica die WEL werkte
+🔄 NU: gebruik je vorige code als basis. Kopieer alle ongewijzigde files identiek over.
+   Pas alleen de specifieke regels aan die de gerapporteerde failures veroorzaakten.
 """
-
         prompt = f"""Je bent een expert Python developer. Schrijf alle code voor dit project:
 
 Project: {plan['project_name']}
