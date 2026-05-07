@@ -3,6 +3,47 @@ Project State
 >
 > Snapshot of every component's current state. Read this before making changes.
 ---
+
+## 2026-05-07 Sessie samenvatting
+
+### Bereikt
+
+- **Rollback**: main staat op stable iter3-base (`7a4d09e` ancestry). Iter5 broken commits gearchiveerd als `main-archive-2026-05-06`. Drie sanity-tests bevestigen werking.
+- **Phase 5A — HEALTHCHECK**: alle gegenereerde services hebben nu een Python-based HEALTHCHECK directive. Geverifieerd op `md5_hash_service` (`Up X seconds (healthy)`).
+- **Baseline metrics**: `scripts/factory_baseline.py` aggregeert pipeline-statistieken uit job logs. Eerste snapshot in `docs/baseline-2026-05-06.md`. Pre-fix cijfers: 51.9% success, 22.2% first-attempt APPROVED, 0% premium usage waargenomen.
+- **Pipeline failure logging**: `failure_context` per attempt (issues, test_output_excerpt, failing_criteria), `traceback` + `error_type` + `error_during_attempt` in top-level errors. Alle failures vanaf nu gestructureerd vastgelegd.
+- **Developer prompt — incremental retry**: preservation-rules vooraan, visuele markers, onderscheid tester-fail vs judge-reject. Empirisch gevalideerd op twee tasks: Roman numerals (was 7-att fail → werd 2-att success), ISBN validator (success).
+- **build_feedback polish**: parset functional smoke JSON om concrete scenario-failures in `issues` te zetten.
+- **Incremental log persistence**: log wordt nu na elke attempt naar disk geschreven, live visibility tijdens runs mogelijk.
+
+### Empirische vondst
+
+De retry-loop was **regeneratief, niet incrementeel**. Empirisch bewijs: Roman numerals run pre-fix had attempt_4 met passing tests, daarna attempts 5-7 weer falend — de Developer brak werkende code terwijl hij Judge-feedback adresseerde. De prompt-fix lijkt dit op te lossen (n=2 datapunten).
+
+### Status updates
+
+| Component | Was | Nu |
+|---|---|---|
+| RQ pipeline (iter5) | ❌ Broken | ✅ Teruggerold, Phase 5A incrementeel werkend |
+| Per-attempt failure logging | ❌ Missing | ✅ Geïmplementeerd |
+| Live visibility tijdens runs | ❌ Geen | ✅ Incrementeel log persist |
+| Retry-mechanisme | Regeneratief | Edits-preserving (prompt-level) |
+| Failure data structuur | Alleen pass/fail | Issues, test output, criteria |
+
+### Open
+
+- Lessons auto-extractie: nog niet gestart, maar nu haalbaar dankzij gestructureerde `failure_context`
+- Phase 5B (non-root user): bewust niet gedaan
+- Domain detection few-shot: niet gedaan
+- Schema-first DB services: geparkeerd
+- Robuustheid prompt-fix: nog n=2 validatie-runs, te weinig voor sterke claims
+
+### Aanbevolen vervolg (toekomstige sessies)
+
+1. Meer validatie-runs over diverse task-types (data parsing, API services, file processing) om robuustheid prompt-fix te bevestigen
+2. Lessons auto-extractie ontwerp + implementatie nu de input-data klopt
+3. Re-baseline na N nieuwe runs om effect prompt-fix kwantitatief te meten
+---
 Quick Status
 Component	State	Last verified
 Orchestrator VM (192.168.128.197)	✅ Working	2026-05-05
