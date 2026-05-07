@@ -1,0 +1,38 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+    "--tb=short",
+]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests (fast, no external deps)",
+    "integration: integration tests (TestClient, mocked deps)",
+    "contract: contract tests (verifies OpenAPI matches reality)",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/service_template/*",
+    "src/main.py",
+    "*/__init__.py",
+    "*/tests/*",
+]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
