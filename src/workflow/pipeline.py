@@ -40,8 +40,35 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         test_output = ""
         for step in test_result.get("steps", []):
             if not step.get("ok", True):
-                issues.append(f"{step['name']}: {step.get('stderr', '')[:200]}")
-                test_output += f"\n--- {step['name']} ---\n{step.get('stdout', '')}\n{step.get('stderr', '')}"
+                step_name = step['name']
+                stderr = step.get('stderr', '') or ''
+                stdout = step.get('stdout', '') or ''
+
+                # Voor steps die JSON output produceren (zoals functional smoke test):
+                # parse de scenarios en haal failing eruit voor een leesbaar bericht.
+                parsed_failures = []
+                try:
+                    data = json.loads(stdout) if stdout.strip() else None
+                    if isinstance(data, list):
+                        for item in data:
+                            if not isinstance(item, dict):
+                                continue
+                            evaluation = item.get("evaluation", {})
+                            if not evaluation.get("passed", True):
+                                scenario_name = item.get("scenario", {}).get("name", "?")
+                                reasons = evaluation.get("reasons", [])
+                                reason_str = "; ".join(reasons) if reasons else "(geen reden gegeven)"
+                                parsed_failures.append(f"scenario '{scenario_name}': {reason_str}")
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    pass
+
+                if parsed_failures:
+                    for msg in parsed_failures:
+                        issues.append(f"{step_name}: {msg}")
+                else:
+                    issues.append(f"{step_name}: {stderr[:200]}")
+
+                test_output += f"\n--- {step_name} ---\n{stdout}\n{stderr}"
         for criterion in ["functional_match", "security", "documentation", "code_quality"]:
             c = verdict.get(criterion, {})
             if not c.get("pass", True):
