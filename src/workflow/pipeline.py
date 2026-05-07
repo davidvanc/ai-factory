@@ -102,6 +102,13 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             ],
         }
 
+    def _persist_log():
+        """Schrijf run_log incrementeel naar disk voor live visibility tijdens runs."""
+        try:
+            log_file.write_text(json.dumps(run_log, indent=2, default=str))
+        except Exception:
+            pass  # log-write nooit de pipeline laten crashen
+
     try:
         # PLANNER
         plan = PlannerAgent().run(task)
@@ -122,6 +129,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         for ta in range(1, max_tester_attempts + 1):
             attempt = ta
             run_log["attempts"][f"attempt_{attempt}"] = {"phase": "tester"}
+            _persist_log()
             use_premium = (ta == max_tester_attempts)
             role = "developer_premium" if use_premium else "developer"
 
@@ -143,12 +151,14 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             passing = count_passing(test_result)
             passing_history.append(passing)
             run_log["attempts"][f"attempt_{attempt}"]["passing_count"] = passing
+            _persist_log()
 
             if not test_result["passed"]:
                 if len(passing_history) >= 2 and passing_history[-1] <= passing_history[-2]:
                     no_progress += 1
                 feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
                 run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _tester_failure_context(feedback)
+                _persist_log()
                 continue
 
             tests_ok = True
@@ -157,6 +167,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             verdict = JudgeAgent().run(plan, build_result, test_result)
             run_log["attempts"][f"attempt_{attempt}"]["judge_duration"] = time.time() - t0
             run_log["attempts"][f"attempt_{attempt}"]["verdict"] = verdict.get("overall_verdict")
+            _persist_log()
             last_verdict = verdict
 
             if verdict.get("overall_verdict") == "APPROVED":
@@ -165,6 +176,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
             feedback = build_feedback(test_result, verdict, dev_result)
             run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _judge_failure_context(verdict)
+            _persist_log()
             break  # tests OK, ga naar fase 2
 
         # FASE 2: Judge loop
@@ -172,6 +184,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             for ja in range(1, max_judge_attempts + 1):
                 attempt += 1
                 run_log["attempts"][f"attempt_{attempt}"] = {"phase": "judge_fix"}
+                _persist_log()
                 use_premium = (ja == max_judge_attempts)
                 role = "developer_premium" if use_premium else "developer"
 
@@ -183,11 +196,13 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 if not test_result["passed"]:
                     feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
                     run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _tester_failure_context(feedback)
+                    _persist_log()
                     continue
 
                 verdict = JudgeAgent().run(plan, build_result, test_result)
                 last_verdict = verdict
                 run_log["attempts"][f"attempt_{attempt}"]["verdict"] = verdict.get("overall_verdict")
+                _persist_log()
 
                 if verdict.get("overall_verdict") == "APPROVED":
                     approved = True
@@ -195,6 +210,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
                 feedback = build_feedback(test_result, verdict, dev_result)
                 run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _judge_failure_context(verdict)
+                _persist_log()
 
         # Resultaat
         status = "success" if approved else "failed"
