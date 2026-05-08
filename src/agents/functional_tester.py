@@ -10,6 +10,7 @@ import socket
 from pathlib import Path
 from src.llm.client import LLMClient
 from src.llm.json_utils import extract_json
+from urllib.parse import urlencode
 
 
 def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: int = 30) -> bool:
@@ -92,8 +93,17 @@ class FunctionalTester:
                 path = ep.get("path", "/")
                 request_body = ep.get("request_example")
 
+                url = f"http://localhost:{port}{path}"
+                if method == "GET" and request_body and isinstance(request_body, dict):
+                    try:
+                        qs_params = {k: v for k, v in request_body.items() if v is not None}
+                        if qs_params:
+                            url = f"{url}?{urlencode(qs_params)}"
+                    except (TypeError, ValueError):
+                        pass  # ongeldige query values, fallback op base url
+
                 cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                       "-X", method, f"http://localhost:{port}{path}"]
+                       "-X", method, url]
                 if request_body and method in ("POST", "PUT", "PATCH"):
                     cmd.extend(["-H", "Content-Type: application/json",
                                 "-d", json.dumps(request_body)])
@@ -102,7 +112,7 @@ class FunctionalTester:
                     r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                     status_code = r.stdout.strip()
                     # Ook de body ophalen voor inspectie
-                    body_cmd = ["curl", "-s", "-X", method, f"http://localhost:{port}{path}"]
+                    body_cmd = ["curl", "-s", "-X", method, url]
                     if request_body and method in ("POST", "PUT", "PATCH"):
                         body_cmd.extend(["-H", "Content-Type: application/json",
                                          "-d", json.dumps(request_body)])
