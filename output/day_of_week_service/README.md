@@ -16,17 +16,16 @@ De service draait dan op http://localhost:8023
 
 ### POST /day-of-week
 
-Berekent de dag van de week voor een gegeven datum in YYYY-MM-DD formaat met Zeller's congruence.
+Berekent de dag van de week voor een datum in YYYY-MM-DD formaat via Zeller's congruence.
 
 ```bash
-curl -X POST http://localhost:8023/day-of-week -H 'Content-Type: application/json' -d '{"date": "2024-03-15"}'
+curl -X POST http://localhost:8023/day-of-week -H 'Content-Type: application/json' -d '{"date": "2025-01-15"}'
 ```
 
 **Response:**
 ```json
 {
-  "date": "2024-03-15",
-  "day_of_week": "Friday"
+  "day": "Wednesday"
 }
 ```
 

@@ -1,26 +1,31 @@
-def test_post_day_of_week_friday(client):
-    response = client.post("/day-of-week", json={"date": "2024-03-15"})
+def test_day_of_week_wednesday(client):
+    response = client.post("/day-of-week", json={"date": "2025-01-15"})
     assert response.status_code == 200
-    assert response.json() == {"date": "2024-03-15", "day_of_week": "Friday"}
+    assert response.json() == {"day": "Wednesday"}
 
-def test_post_day_of_week_monday(client):
-    response = client.post("/day-of-week", json={"date": "2000-01-03"})
+def test_day_of_week_saturday(client):
+    response = client.post("/day-of-week", json={"date": "2000-01-01"})
     assert response.status_code == 200
-    assert response.json() == {"date": "2000-01-03", "day_of_week": "Monday"}
+    assert response.json() == {"day": "Saturday"}
 
-def test_post_day_of_week_leap_year(client):
-    response = client.post("/day-of-week", json={"date": "2020-02-29"})
+def test_day_of_week_jan_feb_adjustment(client):
+    response = client.post("/day-of-week", json={"date": "2023-02-01"})
     assert response.status_code == 200
-    assert response.json() == {"date": "2020-02-29", "day_of_week": "Saturday"}
+    assert response.json() == {"day": "Wednesday"}
+
+def test_day_of_week_leap_year(client):
+    response = client.post("/day-of-week", json={"date": "2024-02-29"})
+    assert response.status_code == 200
+    assert response.json() == {"day": "Thursday"}
 
 def test_invalid_date_format(client):
-    response = client.post("/day-of-week", json={"date": "2024/03/15"})
-    assert response.status_code in (400, 422)
-
-def test_non_existent_date(client):
-    response = client.post("/day-of-week", json={"date": "2024-02-30"})
-    assert response.status_code in (400, 422)
+    response = client.post("/day-of-week", json={"date": "15-01-2025"})
+    assert response.status_code == 422
 
 def test_missing_date_field(client):
     response = client.post("/day-of-week", json={})
     assert response.status_code == 422
+
+def test_non_existent_date(client):
+    response = client.post("/day-of-week", json={"date": "2025-02-30"})
+    assert response.status_code == 400

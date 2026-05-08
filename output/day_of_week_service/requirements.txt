@@ -1,10 +1,10 @@
 fastapi
 uvicorn
 pydantic
-httpx
 pytest
 pytest-asyncio>=0.21
 pytest-cov
+httpx
 pydantic-settings>=2.0
 structlog
 prometheus-client>=0.20

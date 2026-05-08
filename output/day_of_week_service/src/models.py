@@ -1,18 +1,15 @@
 from pydantic import BaseModel, field_validator
-from datetime import date
 import re
 
 class DayOfWeekRequest(BaseModel):
-    date: date
+    date: str
 
-    @field_validator('date', mode='before')
+    @field_validator('date')
     @classmethod
-    def check_date_format(cls, v):
-        if isinstance(v, str):
-            if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
-                raise ValueError("Date must be in YYYY-MM-DD format")
+    def validate_format(cls, v: str) -> str:
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
+            raise ValueError("Invalid date format. Must be YYYY-MM-DD")
         return v
 
 class DayOfWeekResponse(BaseModel):
-    date: str
-    day_of_week: str
+    day: str

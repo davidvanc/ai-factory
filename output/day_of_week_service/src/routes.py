@@ -1,17 +1,16 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from src.models import DayOfWeekRequest, DayOfWeekResponse
-from src.logic import calculate_day_of_week_zeller
+from src.logic import calculate_day_of_week
+import datetime
 
 router = APIRouter()
 
 @router.post("/day-of-week", response_model=DayOfWeekResponse)
 async def get_day_of_week(request: DayOfWeekRequest):
-    day_name = calculate_day_of_week_zeller(
-        year=request.date.year,
-        month=request.date.month,
-        day=request.date.day
-    )
-    return DayOfWeekResponse(
-        date=request.date.isoformat(),
-        day_of_week=day_name
-    )
+    try:
+        datetime.datetime.strptime(request.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Non-existent date")
+    
+    day = calculate_day_of_week(request.date)
+    return DayOfWeekResponse(day=day)
