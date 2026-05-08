@@ -1,6 +1,6 @@
 # hex_color_converter
 
-Een HTTP microservice die HEX kleurcodes omzet naar RGB en HSL waarden
+A microservice that converts hex color codes to RGB and HSL formats via dedicated endpoints.
 
 ## Lokaal draaien
 
@@ -14,34 +14,76 @@ De service draait dan op http://localhost:8010
 
 ## Endpoints en testcommando's
 
-### POST /convert
+### POST /to-rgb
 
-Zet een HEX kleurcode om naar RGB en HSL waarden
+Converts a hex color (with or without leading #) to RGB format.
 
 ```bash
-curl -X POST http://localhost:8010/convert -H 'Content-Type: application/json' -d '{"hex": "#FF5733"}'
+curl -X POST http://localhost:8010/to-rgb -H 'Content-Type: application/json' -d '{"hex": "#FF5733"}'
+```
+
+**Response:**
+```json
+{
+  "rgb": {
+    "r": 255,
+    "g": 87,
+    "b": 51
+  }
+}
+```
+
+### POST /to-hsl
+
+Converts a hex color (with or without leading #) to HSL format.
+
+```bash
+curl -X POST http://localhost:8010/to-hsl -H 'Content-Type: application/json' -d '{"hex": "FF5733"}'
+```
+
+**Response:**
+```json
+{
+  "hsl": {
+    "h": 11,
+    "s": 100,
+    "l": 60
+  }
+}
 ```
 
 ### GET /convert
 
-Zet een HEX kleurcode om via query parameter
+Converts a hex color provided as a query parameter to both RGB and HSL formats.
 
 ```bash
 curl -X GET 'http://localhost:8010/convert?hex=FF5733'
 ```
 
-### GET /health
-
-Healthcheck endpoint
-
-```bash
-curl -X GET http://localhost:8010/health
+**Response:**
+```json
+{
+  "hex": "FF5733",
+  "rgb": {
+    "r": 255,
+    "g": 87,
+    "b": 51
+  },
+  "hsl": {
+    "h": 11,
+    "s": 100,
+    "l": 60
+  }
+}
 ```
 
-### GET /health
+## Standaard endpoints (van service template)
 
 ```bash
-curl http://localhost:8010/health
+curl http://localhost:8010/health    # liveness probe
+curl http://localhost:8010/ready     # readiness probe
+curl http://localhost:8010/metrics   # Prometheus metrics
+open http://localhost:8010/docs      # OpenAPI documentation
 ```
 
 
