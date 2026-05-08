@@ -1,60 +1,36 @@
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
 from typing import Optional
-from src.logic import hex_to_rgb, hex_to_hsl
+from src.models import HexRequest, RGBResponse, HSLResponse, ConvertResponse, RGB, HSL
+from src.logic import hex_to_rgb, rgb_to_hsl, clean_hex
 import json
 
 router = APIRouter()
 
-class HexRequest(BaseModel):
-    hex: str = Field(..., description="Hex color code")
-
-class RGBModel(BaseModel):
-    r: int
-    g: int
-    b: int
-
-class HSLModel(BaseModel):
-    h: int
-    s: int
-    l: int
-
-class RGBResponse(BaseModel):
-    rgb: RGBModel
-
-class HSLResponse(BaseModel):
-    hsl: HSLModel
-
-class ConvertResponse(BaseModel):
-    hex: str
-    rgb: RGBModel
-    hsl: HSLModel
-
 @router.post("/to-rgb", response_model=RGBResponse)
-async def to_rgb(request: HexRequest):
+async def convert_to_rgb(request: HexRequest):
     try:
-        rgb = hex_to_rgb(request.hex)
-        return RGBResponse(rgb=RGBModel(**rgb))
+        r, g, b = hex_to_rgb(request.hex)
+        return RGBResponse(rgb=RGB(r=r, g=g, b=b))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
 @router.post("/to-hsl", response_model=HSLResponse)
-async def to_hsl(request: HexRequest):
+async def convert_to_hsl(request: HexRequest):
     try:
-        hsl = hex_to_hsl(request.hex)
-        return HSLResponse(hsl=HSLModel(**hsl))
+        r, g, b = hex_to_rgb(request.hex)
+        h, s, l = rgb_to_hsl(r, g, b)
+        return HSLResponse(hsl=HSL(h=h, s=s, l=l))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
 @router.get("/convert", response_model=ConvertResponse)
-async def convert(request: Request, hex: Optional[str] = Query(None, description="Hex color code")):
+async def convert_both(request: Request, hex: Optional[str] = Query(None, description="Hex color code")):
     if not hex:
         try:
             body_bytes = await request.body()
             if body_bytes:
-                body = json.loads(body_bytes)
-                if isinstance(body, dict):
-                    hex = body.get("hex")
+                data = json.loads(body_bytes)
+                hex = data.get("hex")
         except Exception:
             pass
             
@@ -62,8 +38,13 @@ async def convert(request: Request, hex: Optional[str] = Query(None, description
         hex = "FF5733"
         
     try:
-        rgb = hex_to_rgb(hex)
-        hsl = hex_to_hsl(hex)
-        return ConvertResponse(hex=hex, rgb=RGBModel(**rgb), hsl=HSLModel(**hsl))
+        cleaned = clean_hex(hex)
+        r, g, b = hex_to_rgb(hex)
+        h, s, l = rgb_to_hsl(r, g, b)
+        return ConvertResponse(
+            hex=f"#{cleaned}",
+            rgb=RGB(r=r, g=g, b=b),
+            hsl=HSL(h=h, s=s, l=l)
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
