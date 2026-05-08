@@ -33,6 +33,29 @@ def _extract_test_names(test_result: dict) -> list[str]:
             failing = sorted(set(matches))
     return failing
 
+
+def _summarize_failure_for_history(attempt_num: int, failure_context: dict) -> str:
+    """Korte 1-regel samenvatting van een failure voor cross-attempt history."""
+    phase = failure_context.get("phase", "?")
+    if phase == "tester":
+        issues = failure_context.get("issues", [])
+        if issues:
+            summary = issues[0]
+            if len(summary) > 200:
+                summary = summary[:200] + "..."
+            return f"Attempt {attempt_num} [tester]: {summary}"
+        return f"Attempt {attempt_num} [tester]: tests failed (geen specifieke issue)"
+    elif phase == "judge_rejected":
+        reason = failure_context.get("verdict_reason", "") or ""
+        if not reason:
+            criteria = failure_context.get("failing_criteria", [])
+            if criteria:
+                reason = criteria[0].get("reason", "")
+        if len(reason) > 250:
+            reason = reason[:250] + "..."
+        return f"Attempt {attempt_num} [judge]: {reason}"
+    return f"Attempt {attempt_num} [{phase}]: onbekende failure"
+
 def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                           max_judge_attempts: int = 3) -> dict:
     """
@@ -149,6 +172,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         dev_result = None
         attempt = 0
         passing_history = []
+        failure_history = []
         no_progress = 0
         tests_ok = False
 
@@ -186,7 +210,10 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 if len(passing_history) >= 2 and passing_history[-1] <= passing_history[-2]:
                     no_progress += 1
                 feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
-                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _tester_failure_context(feedback)
+                fc = _tester_failure_context(feedback)
+                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = fc
+                failure_history.append(_summarize_failure_for_history(attempt, fc))
+                feedback["history"] = list(failure_history)
                 _persist_log()
                 continue
 
@@ -204,7 +231,10 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 break
 
             feedback = build_feedback(test_result, verdict, dev_result)
-            run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _judge_failure_context(verdict)
+            fc = _judge_failure_context(verdict)
+            run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = fc
+            failure_history.append(_summarize_failure_for_history(attempt, fc))
+            feedback["history"] = list(failure_history)
             _persist_log()
             break  # tests OK, ga naar fase 2
 
@@ -226,7 +256,10 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
                 if not test_result["passed"]:
                     feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
-                    run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _tester_failure_context(feedback)
+                    fc = _tester_failure_context(feedback)
+                    run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = fc
+                    failure_history.append(_summarize_failure_for_history(attempt, fc))
+                    feedback["history"] = list(failure_history)
                     _persist_log()
                     continue
 
@@ -240,7 +273,10 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                     break
 
                 feedback = build_feedback(test_result, verdict, dev_result)
-                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = _judge_failure_context(verdict)
+                fc = _judge_failure_context(verdict)
+                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = fc
+                failure_history.append(_summarize_failure_for_history(attempt, fc))
+                feedback["history"] = list(failure_history)
                 _persist_log()
 
         # Resultaat

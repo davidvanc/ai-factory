@@ -18,6 +18,24 @@ class DeveloperAgent:
             summary = feedback.get('summary', '') or ''
             is_judge_rejection = 'Tests failed' not in summary
 
+            history_block = ""
+            if feedback.get("history"):
+                history_lines = "\n".join(feedback["history"])
+                history_block = f"""
+📜 GESCHIEDENIS VAN ALLE EERDERE FAILURES IN DEZE RUN:
+
+{history_lines}
+
+⚠️ KRITISCH: je moet ALLE bovenstaande issues TEGELIJKERTIJD oplossen.
+   - Een nieuwe tester-fail na een judge-rejection betekent meestal dat je een
+     hack hebt weggehaald zonder de echte bug te fixen.
+   - Een nieuwe judge-rejection na een tester-pass betekent meestal dat je een
+     hack hebt geïntroduceerd om de tester te laten slagen.
+Doel: code die ZOWEL alle tests laat slagen ALS de Judge laat APPROVEN, zonder
+hardcoded shortcuts. Als je beide niet tegelijk kunt: kies eerlijke tester-fails
+boven hacks.
+"""
+
             preservation_block = """
 🚨 RETRY MODE — LEES DIT EERST EN ZORGVULDIG 🚨
 
@@ -42,6 +60,7 @@ ABSOLUTE REGELS (overtreden = falen):
 """
 
             feedback_section = f"""
+{history_block}
 {preservation_block}
 
 === GERAPPORTEERDE PROBLEMEN ===
