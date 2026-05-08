@@ -7,6 +7,32 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _snapshot_attempt_files(attempt_num: int, dev_result: dict, snapshot_dir: Path):
+    """Bewaar de gegenereerde files per attempt voor latere lesson-extractie."""
+    try:
+        attempt_dir = snapshot_dir / f"attempt_{attempt_num}"
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "files": dev_result.get("files", []),
+            "model": dev_result.get("model"),
+        }
+        (attempt_dir / "files.json").write_text(json.dumps(payload, indent=2, default=str))
+    except Exception:
+        pass  # snapshot mag de pipeline nooit crashen
+
+
+def _extract_test_names(test_result: dict) -> list[str]:
+    """Haal failing test names uit pytest output (ANSI-tolerant)."""
+    import re
+    ansi_re = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+    failing = []
+    for step in test_result.get("steps", []):
+        if step.get("name") == "pytest":
+            stdout = ansi_re.sub('', step.get("stdout", "") or "")
+            matches = re.findall(r"FAILED\s+([\w/.\-]+::[\w\[\]\-]+)", stdout)
+            failing = sorted(set(matches))
+    return failing
+
 def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                           max_judge_attempts: int = 3) -> dict:
     """
@@ -24,6 +50,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
     Path("logs").mkdir(exist_ok=True)
     log_file = Path("logs") / f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    snapshot_dir = Path("logs/snapshots") / log_file.stem
     run_log = {"task": task, "start": datetime.now().isoformat(), "attempts": {}}
 
     def count_passing(test_result):
@@ -135,7 +162,9 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
             t0 = time.time()
             dev_result = DeveloperAgent().run(plan, feedback=feedback, role_override=role)
+            _snapshot_attempt_files(attempt, dev_result, snapshot_dir)
             run_log["attempts"][f"attempt_{attempt}"]["dev_duration"] = time.time() - t0
+            run_log["attempts"][f"attempt_{attempt}"]["failing_tests"] = _extract_test_names(test_result)
             run_log["attempts"][f"attempt_{attempt}"]["model"] = role
 
             t0 = time.time()
@@ -189,9 +218,11 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 role = "developer_premium" if use_premium else "developer"
 
                 dev_result = DeveloperAgent().run(plan, feedback=feedback, role_override=role)
+                _snapshot_attempt_files(attempt, dev_result, snapshot_dir)
                 build_result = BuilderAgent().run(plan, dev_result, attempt=attempt)
                 last_build = build_result
                 test_result = TesterAgent().run(build_result, plan=plan)
+                run_log["attempts"][f"attempt_{attempt}"]["failing_tests"] = _extract_test_names(test_result)
 
                 if not test_result["passed"]:
                     feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
