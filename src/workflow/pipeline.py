@@ -164,7 +164,6 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             dev_result = DeveloperAgent().run(plan, feedback=feedback, role_override=role)
             _snapshot_attempt_files(attempt, dev_result, snapshot_dir)
             run_log["attempts"][f"attempt_{attempt}"]["dev_duration"] = time.time() - t0
-            run_log["attempts"][f"attempt_{attempt}"]["failing_tests"] = _extract_test_names(test_result)
             run_log["attempts"][f"attempt_{attempt}"]["model"] = role
 
             t0 = time.time()
@@ -180,6 +179,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             passing = count_passing(test_result)
             passing_history.append(passing)
             run_log["attempts"][f"attempt_{attempt}"]["passing_count"] = passing
+            run_log["attempts"][f"attempt_{attempt}"]["failing_tests"] = _extract_test_names(test_result)
             _persist_log()
 
             if not test_result["passed"]:
