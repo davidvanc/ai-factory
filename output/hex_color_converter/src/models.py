@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class HexRequest(BaseModel):
-    hex: str
+    hex: str = Field(..., pattern=r'^#?[0-9a-fA-F]{6}$')
 
 class RGB(BaseModel):
     r: int
@@ -20,6 +20,5 @@ class HSLResponse(BaseModel):
     hsl: HSL
 
 class ConvertResponse(BaseModel):
-    hex: str
     rgb: RGB
     hsl: HSL

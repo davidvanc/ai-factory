@@ -1,50 +1,26 @@
-from fastapi import APIRouter, HTTPException, Query, Request
-from typing import Optional
+from fastapi import APIRouter, Query
 from src.models import HexRequest, RGBResponse, HSLResponse, ConvertResponse, RGB, HSL
-from src.logic import hex_to_rgb, rgb_to_hsl, clean_hex
-import json
+from src.logic import hex_to_rgb, hex_to_hsl
+from src.service_template.logging_config import get_logger
 
+log = get_logger("hex_color_converter")
 router = APIRouter()
 
 @router.post("/to-rgb", response_model=RGBResponse)
 async def convert_to_rgb(request: HexRequest):
-    try:
-        r, g, b = hex_to_rgb(request.hex)
-        return RGBResponse(rgb=RGB(r=r, g=g, b=b))
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    log.info(f"Converting {request.hex} to RGB")
+    rgb_dict = hex_to_rgb(request.hex)
+    return RGBResponse(rgb=RGB(**rgb_dict))
 
 @router.post("/to-hsl", response_model=HSLResponse)
 async def convert_to_hsl(request: HexRequest):
-    try:
-        r, g, b = hex_to_rgb(request.hex)
-        h, s, l = rgb_to_hsl(r, g, b)
-        return HSLResponse(hsl=HSL(h=h, s=s, l=l))
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    log.info(f"Converting {request.hex} to HSL")
+    hsl_dict = hex_to_hsl(request.hex)
+    return HSLResponse(hsl=HSL(**hsl_dict))
 
 @router.get("/convert", response_model=ConvertResponse)
-async def convert_both(request: Request, hex: Optional[str] = Query(None, description="Hex color code")):
-    if not hex:
-        try:
-            body_bytes = await request.body()
-            if body_bytes:
-                data = json.loads(body_bytes)
-                hex = data.get("hex")
-        except Exception:
-            pass
-            
-    if not hex:
-        hex = "FF5733"
-        
-    try:
-        cleaned = clean_hex(hex)
-        r, g, b = hex_to_rgb(hex)
-        h, s, l = rgb_to_hsl(r, g, b)
-        return ConvertResponse(
-            hex=f"#{cleaned}",
-            rgb=RGB(r=r, g=g, b=b),
-            hsl=HSL(h=h, s=s, l=l)
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+async def convert_both(hex: str = Query(..., pattern=r'^#?[0-9a-fA-F]{6}$')):
+    log.info(f"Converting {hex} to RGB and HSL")
+    rgb_dict = hex_to_rgb(hex)
+    hsl_dict = hex_to_hsl(hex)
+    return ConvertResponse(rgb=RGB(**rgb_dict), hsl=HSL(**hsl_dict))

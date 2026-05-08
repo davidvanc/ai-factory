@@ -1,6 +1,6 @@
 # hex_color_converter
 
-Microservice die hex kleuren converteert naar RGB en HSL formaten via HTTP endpoints
+Microservice die hex kleuren converteert naar RGB en/of HSL formaten via HTTP endpoints
 
 ## Lokaal draaien
 
@@ -16,7 +16,7 @@ De service draait dan op http://localhost:8010
 
 ### POST /to-rgb
 
-Converteer een hex kleur naar RGB formaat
+Converteert een hex kleur (met of zonder #) naar RGB formaat
 
 ```bash
 curl -X POST http://localhost:8010/to-rgb -H 'Content-Type: application/json' -d '{"hex": "#FF5733"}'
@@ -35,7 +35,7 @@ curl -X POST http://localhost:8010/to-rgb -H 'Content-Type: application/json' -d
 
 ### POST /to-hsl
 
-Converteer een hex kleur naar HSL formaat
+Converteert een hex kleur (met of zonder #) naar HSL formaat
 
 ```bash
 curl -X POST http://localhost:8010/to-hsl -H 'Content-Type: application/json' -d '{"hex": "FF5733"}'
@@ -54,7 +54,7 @@ curl -X POST http://localhost:8010/to-hsl -H 'Content-Type: application/json' -d
 
 ### GET /convert
 
-Converteer een hex kleur naar zowel RGB als HSL formaat via query parameter
+Converteert een hex kleur naar zowel RGB als HSL formaat via query parameter
 
 ```bash
 curl -X GET 'http://localhost:8010/convert?hex=FF5733'
@@ -63,7 +63,6 @@ curl -X GET 'http://localhost:8010/convert?hex=FF5733'
 **Response:**
 ```json
 {
-  "hex": "#FF5733",
   "rgb": {
     "r": 255,
     "g": 87,
