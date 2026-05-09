@@ -202,7 +202,7 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Stappen die je verplicht moet zetten:
      1. Exporteer een reset functie uit de module met state:
         # src/storage.py
-        _items: dict = {}
+        _items: dict = {{}}
         _counter: int = 0
 
         def reset_state() -> None:
