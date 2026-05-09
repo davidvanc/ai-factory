@@ -1,7 +1,6 @@
 """
-Functional Tester — leest /openapi.json van de draaiende service en test elk endpoint
-met fake bodies en path-param injectie. Spec-driven, niet plan-driven.
-Voor CLI tools: simpele --help sanity check.
+Functional Tester — start service in container en test elk endpoint uit het plan
+met state tracking voor path params (POST → vang id → gebruik in volgende calls).
 """
 import json
 import re
@@ -9,6 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -39,18 +39,20 @@ class FunctionalTester:
         ], check=True, capture_output=True, timeout=30)
 
     # -----------------------------
-    # Readiness (wacht tot openapi.json reageert)
+    # Readiness
     # -----------------------------
     def _wait_ready(self, base_url: str, timeout: int = 25) -> bool:
+        paths = ["/health", "/", "/docs", "/openapi.json"]
         with httpx.Client(timeout=2.0) as client:
             start = time.time()
             while time.time() - start < timeout:
-                try:
-                    r = client.get(base_url + "/openapi.json")
-                    if r.status_code == 200:
-                        return True
-                except Exception:
-                    pass
+                for p in paths:
+                    try:
+                        r = client.get(base_url + p)
+                        if r.status_code < 500:
+                            return True
+                    except Exception:
+                        pass
                 time.sleep(0.5)
         return False
 
@@ -65,83 +67,41 @@ class FunctionalTester:
         raise last
 
     # -----------------------------
-    # Schema-driven body builder
-    # Houdt rekening met simpele 'format' hints zodat strict-validators
-    # (EmailStr, UUID, datetime, ...) niet falen op willekeurige strings.
+    # Verwacht status uit plan
     # -----------------------------
-    def _fake_value(self, schema: dict) -> Any:
-        if not isinstance(schema, dict):
-            return None
-
-        if "enum" in schema and schema["enum"]:
-            return schema["enum"][0]
-
-        # union types: pak eerste niet-null optie
-        for key in ("anyOf", "oneOf"):
-            opts = schema.get(key)
-            if isinstance(opts, list) and opts:
-                for opt in opts:
-                    if isinstance(opt, dict) and opt.get("type") != "null":
-                        return self._fake_value(opt)
-                return self._fake_value(opts[0])
-
-        t = schema.get("type")
-        fmt = schema.get("format", "")
-
-        if t == "string":
-            if fmt == "email":
-                return "test@example.com"
-            if fmt in ("uri", "url"):
-                return "https://example.com"
-            if fmt == "uuid":
-                return "00000000-0000-0000-0000-000000000001"
-            if fmt == "date":
-                return "2024-01-01"
-            if fmt == "date-time":
-                return "2024-01-01T00:00:00Z"
-            if fmt == "time":
-                return "12:00:00"
-            return "test"
-        if t == "integer":
-            return 1
-        if t == "number":
-            return 1.0
-        if t == "boolean":
-            return True
-        if t == "array":
-            return [self._fake_value(schema.get("items", {}))]
-        if t == "object":
-            props = schema.get("properties", {})
-            return {k: self._fake_value(v) for k, v in props.items()}
-
-        return None
-
-    def _build_body(self, op: dict) -> Any:
-        try:
-            content = op.get("requestBody", {}).get("content", {})
-            app_json = content.get("application/json")
-            if not app_json:
-                return None
-            return self._fake_value(app_json.get("schema", {}))
-        except Exception:
-            return None
-
-    # -----------------------------
-    # Verwachte status uit OpenAPI (alleen 2xx codes meetellen)
-    # -----------------------------
-    def _expected_status(self, op: dict, method: str) -> int:
-        responses = op.get("responses", {})
-        success_codes = [int(c) for c in responses.keys()
-                         if c.isdigit() and 200 <= int(c) < 300]
-        if success_codes:
-            return min(success_codes)
-        if method == "POST":
+    def _infer_expected_status(self, ep: dict) -> int:
+        if "expected_status" in ep:
+            return ep["expected_status"]
+        desc = (ep.get("description") or "").lower()
+        if "404" in desc:
+            return 404
+        if "422" in desc or "validation" in desc:
+            return 422
+        if ep.get("method", "").upper() == "POST":
             return 201
         return 200
 
     # -----------------------------
+    # Endpoints normaliseren (health altijd erbij)
+    # -----------------------------
+    def _normalize_endpoints(self, plan: dict) -> list:
+        endpoints = list(plan.get("endpoints", []))
+        if not endpoints:
+            endpoints = [
+                {"method": "GET", "path": "/"},
+                {"method": "GET", "path": "/health"},
+            ]
+        if not any(ep.get("path") == "/health" for ep in endpoints):
+            endpoints.append({
+                "method": "GET",
+                "path": "/health",
+                "expected_status": 200,
+            })
+        return endpoints
+
+    # -----------------------------
     # Path-param injectie: vervang elke placeholder met 'id' in de naam
-    # ({id}, {user_id}, {postId}, {ITEM_ID}, ...)
+    # ({id}, {todo_id}, {user_id}, {ITEM_ID}, ...)
     # -----------------------------
     def _inject_path_params(self, path: str, state: dict) -> str:
         if not state.get("id"):
@@ -149,23 +109,23 @@ class FunctionalTester:
         return re.sub(r"\{[^}]*[iI][dD][^}]*\}", str(state["id"]), path)
 
     # -----------------------------
-    # Capture id uit response (recursief, accepteert *id keys)
+    # Vang id uit POST response
     # -----------------------------
-    def _extract_id(self, obj: Any) -> Any:
-        if isinstance(obj, dict):
-            for k, v in obj.items():
+    def _extract_id(self, response) -> Any:
+        try:
+            data = response.json()
+        except Exception:
+            return None
+        if isinstance(data, dict):
+            if "id" in data:
+                return data["id"]
+            for k, v in data.items():
                 if isinstance(k, str) and k.lower().endswith("id"):
                     return v
-            for v in obj.values():
-                found = self._extract_id(v)
-                if found is not None:
-                    return found
-        elif isinstance(obj, list) and obj:
-            return self._extract_id(obj[0])
         return None
 
     # -----------------------------
-    # Hoofdtest: lees openapi.json en test elk endpoint
+    # Hoofdtest
     # -----------------------------
     def _run_service_tests(self, plan: dict, image_tag: str, port: int) -> dict:
         container = f"functest-{plan['project_name']}"
@@ -190,91 +150,94 @@ class FunctionalTester:
                 "passed": False,
                 "scenarios_run": 0,
                 "results": [{
-                    "scenario": {"name": "openapi ready"},
-                    "evaluation": {"passed": False, "reasons": ["openapi not available"]},
+                    "scenario": {"name": "service readiness"},
+                    "evaluation": {"passed": False, "reasons": ["not ready"]},
                     "run": {"stdout": container_logs, "stderr": ""}
                 }]
             }
 
+        endpoints = self._normalize_endpoints(plan)
         results = []
-        all_passed = True
         state: dict = {}
+        all_passed = True
 
         with httpx.Client(timeout=5.0) as client:
             try:
-                spec = client.get(base_url + "/openapi.json").json()
-                paths = spec.get("paths", {})
+                for ep in endpoints:
+                    method = ep.get("method", "GET").upper()
+                    raw_path = ep.get("path", "/")
+                    path = self._inject_path_params(raw_path, state)
+                    url = base_url + path
+                    body = ep.get("request_example")
 
-                for raw_path, methods in paths.items():
-                    for method_name, op in methods.items():
-                        # path-level parameters/summary overslaan
-                        if method_name in ("parameters", "summary", "description") or not isinstance(op, dict):
-                            continue
+                    # GET met request_example → stuur als query string, niet als JSON body
+                    if method == "GET" and body and isinstance(body, dict):
+                        qs = {k: v for k, v in body.items() if v is not None}
+                        if qs:
+                            url = f"{url}?{urlencode(qs)}"
+                        body = None
 
-                        method = method_name.upper()
-                        path = self._inject_path_params(raw_path, state)
-                        url = base_url + path
+                    expected = self._infer_expected_status(ep)
 
-                        body = self._build_body(op)
-                        expected = self._expected_status(op, method)
+                    try:
+                        r = self._request(client, method, url, json_body=body)
+                        status = r.status_code
+                        text = r.text[:500]
 
-                        try:
-                            r = self._request(client, method, url, json_body=body)
-                            status = r.status_code
-                            text = r.text[:500]
-
-                            # Lenient: elke 2xx is geslaagd, niet alleen exact match
+                        # Strict check als plan een explicit expected_status zet,
+                        # anders lenient (elke 2xx oké)
+                        if "expected_status" in ep:
+                            passed = status == expected
+                            reason = f"expected {expected}, got {status}"
+                        else:
                             passed = 200 <= status < 300
-                            reasons = [] if passed else [
-                                f"got {status} (expected {expected} or any 2xx)"
-                            ]
+                            reason = f"got {status} (expected 2xx)"
 
-                            if method == "POST" and passed:
-                                try:
-                                    new_id = self._extract_id(r.json())
-                                    if new_id is not None:
-                                        state["id"] = new_id
-                                except Exception:
-                                    pass
+                        reasons = [] if passed else [reason]
 
-                            log_excerpt = "" if passed else self._logs(container)
+                        if method == "POST" and passed:
+                            new_id = self._extract_id(r)
+                            if new_id is not None:
+                                state["id"] = new_id
 
-                            if not passed:
-                                all_passed = False
-                                print(f"[functional]   FAIL: {method} {raw_path} → {status}")
-                            else:
-                                print(f"[functional]   OK: {method} {raw_path} → {status}")
+                        log_excerpt = "" if passed else self._logs(container)
 
-                            results.append({
-                                "scenario": {"name": f"{method} {raw_path}"},
-                                "run": {
-                                    "stdout": text,
-                                    "stderr": log_excerpt,
-                                    "exit_code": 0 if passed else 1
-                                },
-                                "evaluation": {
-                                    "passed": passed,
-                                    "reasons": reasons,
-                                    "scenario_name": f"{method} {raw_path}"
-                                }
-                            })
-
-                        except Exception as e:
+                        if not passed:
                             all_passed = False
-                            log_excerpt = self._logs(container)
-                            results.append({
-                                "scenario": {"name": f"{method} {raw_path}"},
-                                "run": {
-                                    "stdout": "",
-                                    "stderr": f"{e}\n{log_excerpt}",
-                                    "exit_code": -1
-                                },
-                                "evaluation": {
-                                    "passed": False,
-                                    "reasons": ["request failed"],
-                                    "scenario_name": f"{method} {raw_path}"
-                                }
-                            })
+                            print(f"[functional]   FAIL: {method} {raw_path} → {status}")
+                        else:
+                            print(f"[functional]   OK: {method} {raw_path} → {status}")
+
+                        results.append({
+                            "scenario": {"name": f"{method} {raw_path}"},
+                            "run": {
+                                "stdout": text,
+                                "stderr": log_excerpt,
+                                "exit_code": 0 if passed else 1
+                            },
+                            "evaluation": {
+                                "passed": passed,
+                                "reasons": reasons,
+                                "scenario_name": f"{method} {raw_path}"
+                            }
+                        })
+
+                    except Exception as e:
+                        all_passed = False
+                        log_excerpt = self._logs(container)
+                        results.append({
+                            "scenario": {"name": f"{method} {raw_path}"},
+                            "run": {
+                                "stdout": "",
+                                "stderr": f"{e}\n{log_excerpt}",
+                                "exit_code": -1
+                            },
+                            "evaluation": {
+                                "passed": False,
+                                "reasons": ["request failed"],
+                                "scenario_name": f"{method} {raw_path}"
+                            }
+                        })
 
             finally:
                 self._cleanup(container)
@@ -303,11 +266,11 @@ class FunctionalTester:
                     "run": {
                         "stdout": r.stdout[:500],
                         "stderr": r.stderr[:500],
-                        "exit_code": r.returncode
+                        "exit_code": r.returncode,
                     },
                     "evaluation": {
                         "passed": passed,
-                        "reasons": [] if passed else ["non-zero exit"]
+                        "reasons": [] if passed else ["non-zero exit"],
                     }
                 }]
             }
@@ -318,7 +281,7 @@ class FunctionalTester:
                 "results": [{
                     "scenario": {"name": "cli run"},
                     "run": {"stdout": "", "stderr": str(e), "exit_code": -1},
-                    "evaluation": {"passed": False, "reasons": ["execution failed"]}
+                    "evaluation": {"passed": False, "reasons": ["execution failed"]},
                 }]
             }
 
