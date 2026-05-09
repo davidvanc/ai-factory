@@ -1,353 +1,190 @@
-Project State
-> \*\*Last updated\*\*: May 9, 2026
->
-> Snapshot of every component's current state. Read this before making changes.
+markdown# Project State
 
-### Bekende issue (2026-05-08) — RESOLVED 2026-05-09
+> **Last updated**: May 9, 2026
+> **Status**: Stable post-validation milestone — 6/6 task-types first-attempt APPROVED
+> **Branchable from**: tag `v2026-05-09-validated`
 
-- Truncation bij retry-attempts (>2) met grote `previous_files` is opgelost in de
-  2026-05-09 sessie via slicing van `previous_files` op feedback-relevantie en
-  auto-include set (test files, conftest, main entry). Zie 2026-05-09 sessie.
+## Quick Status
 
-## 2026-05-09 Sessie samenvatting
+| Component | State |
+|---|---|
+| Orchestrator VM (192.168.128.197) | ✅ Working |
+| Worker VM (192.168.129.82) | ✅ Working |
+| Storage VM (192.168.129.20) | ✅ Working |
+| Memory service (port 8765) | ✅ Working |
+| Redis (port 6379) | ✅ Working |
+| Postgres 18 (port 5432) | ✅ Working (ongebruikt door pipeline by design) |
+| RQ pipeline | ✅ Working — first-attempt approved op typische CRUD + computatie |
+| Auto-push to GitHub | ✅ Working |
+| Functional tester | ✅ Plan-driven, stateful, regex path-param injectie |
+| Test-isolation in gegenereerde services | ✅ Belt-and-suspenders (conftest + test files) |
+| Lessons-extractor | 🟡 Manual mode getest, prompt refinement nodig voor pipeline-integratie |
+| Cumulative failure history | ✅ Gevalideerd via library lending run |
+| Schema-first DB services | ❌ Bestaat niet — TODO #2 |
+
+## Recente milestone — 2026-05-09
+
+Twee structurele bugs gefixt, twee features gerefactord, één feature voor 't eerst onder echte condities gevalideerd.
 
 ### Bereikt
 
-- **Truncation-fix via previous_files slicing** in `pipeline.py`. Helper `_slice_previous_files` filtert files op (a) auto-include [test files, conftest.py, main.py/app.py/__main__.py] + (b) files genoemd in feedback-tekst. Rest komt mee als `other_files_manifest` (path + line count + first line). Safety valve: bij geen matches valt terug op alle files.
-- **Functional tester herschreven**: plan-driven, httpx ipv curl-subprocess, regex path-param injectie (vangt `{id}`, `{todo_id}`, `{user_id}`, etc.), state tracking via POST→captured id, lenient status check (elke 2xx tenzij plan expliciet `expected_status` zet), GET met `request_example` als query string.
-- **Validatie-runs post-fix**: 5 diverse task-types, alle 5 first-attempt APPROVED, gemiddeld ~2 min per run:
-  - `todo_service` (single-resource CRUD met path params — de bug-trigger case)
-  - `blog_service` (nested resources, posts + comments)
-  - `movie_search_service` (CRUD + filtering)
-  - `user_registration_service` (CRUD met EmailStr/UUID validatie)
-  - `unit_converter_service` (computatie, stateless)
+1. **Truncation-fix in pipeline.py**: `previous_files` wordt bij retry-attempts gesliced naar (a) auto-include set [test files, conftest.py, main.py/app.py/__main__.py] + (b) files genoemd in feedback-tekst. Rest komt mee als `other_files_manifest`. Safety valve bij geen-matches.
+2. **Functional tester herschreven**: plan-driven, httpx ipv curl-subprocess, regex path-param injectie (vangt `{id}`, `{todo_id}`, `{user_id}`, etc.), state tracking via POST→captured id, lenient status check (any 2xx tenzij plan expliciet `expected_status` zet), GET met `request_example` als query string.
+3. **Test-isolation rule** (Developer-prompt sectie 0d): autouse `reset_state` fixture verplicht in tests/conftest.py *en* in elk test-bestand. Belt-and-suspenders — empirisch bleek dat conftest.py's autouse niet betrouwbaar firet in deze build/test-omgeving (root cause nog onbekend).
+4. **Lessons-extractor manual run**: eerste echte multi-attempt success (library lending) gebruikt om lesson te extracten. Lesson empirisch correct ("duplicate fixture in test file") maar extractor's reasoning was workaround-tier (focus op diff, niet op mechanisme). Extractor-prompt heeft refinement nodig vóór pipeline-integratie.
+
+### Validatie-cijfers
+
+Pre-fix baseline: 22.2% first-attempt APPROVED (uit `docs/baseline-2026-05-06.md`).
+
+Post-fix: **6/6 first-attempt APPROVED** op diverse task-types, gemiddeld ~2:00-2:30 per run:
+
+| Service | Type | Resultaat |
+|---|---|---|
+| `todo_service` | Single-resource CRUD met path-params | 1 attempt (origineel bug-trigger) |
+| `blog_service` | Nested resources (posts + comments) | 1 attempt |
+| `movie_search_service` | CRUD + query-string filtering | 1 attempt |
+| `user_registration_service` | CRUD met EmailStr/UUID validatie | 1 attempt |
+| `unit_converter_service` | Stateless computatie | 1 attempt |
+| `library_lending_system` | Multi-resource + state-machine + business rules | 1 attempt (na test-isolation update) |
 
 ### Empirische bevindingen
 
-- **Pre-fix baseline was 22.2% first-attempt APPROVED. Post-fix: 5/5 op deze batch.** n is klein, maar de spreiding (CRUD, nested, filters, validatie, computatie) is breed genoeg om sterk signaal te geven dat de combinatie van fixes de happy path solid maakt.
-- **De truncation-bug was secundair**. De echte oorzaak van de oorspronkelijke todo-loop was de functional_tester die `{id}` placeholders niet substitueerde — zelfde patroon als de GET-querystring vondst van 2026-05-08, andere variant. Bevestiging: bij rare loops eerst de tester checken voor de Developer-prompt aanraakt.
-- **State-overwrite limiet in tester**: blog_service slaagde toevallig omdat `post_id_counter` en `comment_id_counter` beide op 1 starten. Zou gefaald hebben bij verschillende tellers. Echte beperking surfaced via een fragile pass — niet via failure.
-- **Querystring code-path is dead in de praktijk**: Planner zet `request_example: {}` voor GET endpoints, dus de querystring-tweak in de tester wordt nooit aangeroepen. Pytest dekt filter-logica via TestClient. Geen actie nodig.
-- **Recurring Judge-flags over 3 services met state**:
-  - POST 200 ipv 201 (3/3)
-  - Module-level state niet gereset tussen tests (3/3)
-  - Geen healthcheck in docker-compose (3/3)
-  
-  Developer lost deze niet uit zichzelf op, ondanks dat de Judge ze identiek flagt. Patroon, niet incident.
+- **De truncation-bug was secundair**. De echte oorzaak van de oorspronkelijke todo-loop was de functional_tester die `{id}` placeholders niet substitueerde. Zelfde patroon als de GET-querystring vondst van 2026-05-08, andere variant. Bevestiging: bij rare loops eerst de tester checken voor de Developer-prompt aanraakt.
+- **State-overwrite limiet in tester** (latent): bij blog_service slaagde de nested-resource flow toevallig omdat post_id_counter en comment_id_counter beide op 1 starten. Echte beperking surfaced via fragile pass.
+- **Querystring code-path is dead in praktijk**: Planner zet `request_example: {}` voor GET, dus de querystring-tweak in tester wordt nooit aangeroepen. Pytest dekt filter-logica via TestClient. Niet schadelijk.
+- **conftest.py autouse mystery**: in attempt_1 van library was de fixture syntactisch correct in tests/conftest.py, maar firet niet (bewezen door sequentiële IDs 1,2,3 over tests heen). Dezelfde fixture in test_routes.py firet wel. Onbekend waarom.
+- **Recurring Judge-flags die de Developer niet uit zichzelf oplost**: POST 200 ipv 201 (REST conventie), in-memory zonder persistence-disclaimer, geen healthcheck in docker-compose. Patronen, niet incidenten.
 
-### Status updates
+## TODOs (in prioriteit volgorde)
 
-| Component | Was | Nu |
+### #1 — Diagnose conftest.py autouse mystery (MIDDEL)
+
+Empirisch bewezen: conftest.py's autouse fixture firet niet betrouwbaar in deze build-omgeving. Workaround actief (belt-and-suspenders rule), maar root cause onbekend. Mogelijke kanten: pytest config in pyproject.toml, TestClient lifespan interactie, coverage-plugin interactie. Diagnose vereist lokaal reproduceren van attempt_1's code en pytest draaien met `--setup-show`.
+
+### #2 — Schema-First Database Services (HOOG, project-scope)
+
+User definieert schema als YAML/JSON; deterministisch script (geen LLM) genereert SQLAlchemy modellen + Alembic migrations + repository functies + standaard CRUD endpoints. LLM komt pas in beeld voor business rules bovenop schema-based fundament. Lost iteration 4's brittleness echt op. Geschat: een week geconcentreerd werk. Promovéert hierbij van "geparkeerd" naar kandidaat #1 voor volgende grote sessie.
+
+### #3 — Tester per-resource state tracking (LAAG, latent)
+
+`state["id"]` is één globale slot dat wordt overwriten bij elke POST. Werkt in 80%+ van CRUD-cases, faalt bij multi-resource flows met afwijkende id-conventies. Niet urgent — oppakken bij echte failure.
+
+### #4 — Lessons-extractor refinement + pipeline-integratie (CONDITIONEEL)
+
+Manual run validated dat extractor werkt en gestructureerde output produceert. Maar reasoning was diff-georiënteerd, niet mechanisme-georiënteerd. Voor pipeline-integratie: extractor-prompt versterken met "explain mechanism, not diff" + confidence threshold (≥ 0.7) + tweede-pass die check't "is dit een regel of een workaround?".
+
+### #5 — Domain detection few-shot (LAAG, niet urgent)
+
+Anekdotisch BMI-classificatie issue. Geen recente empirische trigger. Lage effort, lage urgentie.
+
+### #6 — Iteration 5 voltooien (geparkeerd)
+
+Phase 5A (HEALTHCHECK) gedaan. Phase 5B (non-root user + multi-stage Dockerfile + .github/workflows/ci.yml) staat geparkeerd. Opnieuw oppakken als concentrated effort, vergelijkbaar met Schema-First.
+
+## Architectuur (compact)
+┌──────────────────────┐
+│  Orchestrator VM     │  ← submit jobs hier
+│  192.168.128.197     │
+└──────────┬───────────┘
+│ enqueue
+▼
+┌──────────────────────┐
+│  Storage VM          │
+│  192.168.129.20      │
+│  - Redis :6379       │
+│  - Memory :8765      │
+│  - Postgres :5432    │
+└──────────┬───────────┘
+│ dequeue
+▼
+┌──────────────────────┐
+│  Worker VM           │
+│  192.168.129.82      │
+│  Pipeline:           │
+│   Planner            │
+│   Developer          │
+│   Builder            │
+│   Tester             │
+│   Judge              │
+│   → git push         │
+└──────────────────────┘
+
+Flow per job: Planner → Developer (met retry-feedback indien nodig) → Builder → Tester (pytest + functional smoke) → Judge → git push.
+
+## Models per role
+
+| Role | Model | Notes |
 |---|---|---|
-| Truncation bug bij retry | ⚠️ Bekend, geobserveerd | ✅ Gefixt via previous_files slicing |
-| Functional tester | Plan-driven curl, geen path-param sub | Plan-driven httpx, regex path-injectie, state tracking, lenient status |
-| Validatie post-fix | n=0 | ✅ n=5, 100% first-attempt APPROVED |
-| Cumulative failure history | Latent, n=0 | Latent (geen multi-attempt cases gezien) |
+| planner | `anthropic/claude-opus-4-7` | |
+| developer | `~google/gemini-pro-latest` | |
+| developer_premium | `anthropic/claude-opus-4-7` | last attempt fallback |
+| builder | `deepseek/deepseek-v4-flash` | |
+| tester | `deepseek/deepseek-v4-flash` | |
+| judge | `anthropic/claude-sonnet-4-6` | |
+| consultant_scientific | `~google/gemini-pro-latest` | |
 
-### Open / TODO (in prioriteit)
+Globale `max_tokens: 32000`. Per-role timeouts: planner 180s, developer 600s, premium 900s, builder/tester 300s, judge 180s.
 
-1. **Test-isolation richtlijn in Developer-prompt** (HOOGSTE).
-   Empirisch onderbouwd: 3/3 services met state werden door Judge geflagd voor module-level state die niet tussen tests gereset wordt. Developer lost dit niet uit zichzelf op. Concreet: aan de Developer-prompt een regel toevoegen dat services met module-level state verplicht een `reset_*()` functie krijgen plus een autouse `conftest.py` fixture die deze tussen tests aanroept. Lage effort, hoge impact — raakt élke gegenereerde service met state. Verificatie: validatie-batch opnieuw draaien (5 tasks), kijken of de Judge-flag verdwijnt.
+## Operational reference
 
-2. **Domain detection few-shot** (LAAG, niet urgent).
-   Anekdotisch bewijs: BMI-calculator werd ooit als 'general' geclassificeerd ipv 'scientific'. De 5 validatie-tasks gingen prima zonder specialized detection. Lage effort: paar examples in de Planner-prompt. Lage urgentie: geen recente empirische trigger. Pak op zodra een echte misclassificatie weer wordt waargenomen.
+### Daily workflow
 
-3. **Tester per-resource state tracking** (MIDDEL, latent).
-   Blog-run legde de limiet bloot: `state["id"]` is één slot, wordt bij elke POST overschreven. Werkt in 80%+ van CRUD-cases, faalt bij multi-resource flows met andere id-conventies. Niet urgent want huidige tasks slagen; wel iets om te onthouden voor wanneer een echte failure zich aandient.
-
-4. **Lessons-extractor handmatig draaien + pipeline-integratie** (CONDITIONEEL).
-   Wacht op een multi-attempt success. Met de huidige fix-stand zeldzaam. Niet doen voor er data is.
-
-5. **Cumulative failure history validatie** (CONDITIONEEL).
-   Zelfde reden: geen multi-attempt cases.
-
-### Aanbevolen vervolg
-
-Begin met **(1) test-isolation prompt-patch**. Verifieer door de validatie-batch opnieuw te draaien — als de Judge-flag verdwijnt over alle 5 tasks, win bevestigd. Halve dag werk inclusief verificatie. Pas daarna kijken of (2) of (3) opportuun is.
-
----
-
-## 2026-05-08 Sessie samenvatting
-
-### Bereikt
-
-- **Per-attempt code snapshots**: `logs/snapshots/{job_id}/attempt_N/files.json` per attempt geschreven door `_snapshot_attempt_files` in pipeline.py. Maakt diff-based lesson-extractie mogelijk.
-- **Failing tests in log**: pytest-failures per attempt geparsed via `_extract_test_names` (ANSI-tolerant) en opgenomen als `failing_tests` veld. Functional smoke failures blijven in `failure_context.issues`.
-- **Cumulative failure history (Fix A)**: pipeline houdt `failure_history` bij door de hele run, geeft die door aan de Developer prompt als `📜 GESCHIEDENIS` block met cross-attempt framing ("ALLE issues tegelijkertijd oplossen, geen hack-cyclus"). Latent geïmplementeerd — niet gevalideerd onder echte multi-attempt condities omdat die zeldzaam werden na de hieronder genoemde fix.
-- **Lessons-extractor v1**: standalone script `scripts/extract_lessons.py`. Eligibility-checks (success + final_attempt ≥ 2 + snapshots aanwezig + APPROVED gevonden), snapshot-loading, prompt-assembly, LLM-aanroep via `role="planner"` (Opus). Refusal-paden gevalideerd. Refusal-discipline werkt: extractor weigert lessen te bouwen op test-gaming "fixes" die door Judge geslipt zijn — fungeert als second-opinion op de Judge.
-- **Key fix — functional_tester**: ontdekt dat `request_example` alleen werd gebruikt voor POST/PUT/PATCH (als body), niet voor GET (als query string). Resultaat: GET endpoints werden zonder parameters getest, wat de Developer dwong tot hardcoded fallbacks om "tester pass" te halen. De "approved" code bevatte daardoor structureel test-gaming hacks die de Judge inconsistent ving. Fix: `urlencode(request_example)` toegevoegd voor GET requests in `_run_service_tests`. Twee opeenvolgende 1-attempt successes na de fix (hex_color_converter + één andere taak).
-
-### Empirische vondst
-
-Het regression-loop patroon (tester-fail → hack → judge-fail → tester-fail) was **niet primair een Developer-prompt probleem**. Het was een gevolg van een verkeerd ontworpen test-vraag: een endpoint zonder verplichte parameter werd getest met `expected: 2xx` wat alleen via een hardcoded default haalbaar is. De Developer reageerde rationeel op een onmogelijke vraag. Conclusie: bij rare loops eerst checken of de tester een eerlijke vraag stelt voordat aan prompts wordt getrokken.
-
-### Status updates
-
-| Component | Was | Nu |
-|---|---|---|
-| Per-attempt code snapshots | ❌ Missing | ✅ `logs/snapshots/{job_id}/attempt_N/files.json` |
-| Failing tests in log | ❌ Missing | ✅ `failing_tests` veld per attempt |
-| Cumulative failure history | ❌ Niet | ✅ Geïmplementeerd, latent (n=0 echte validatie) |
-| Functional tester realisme | ⚠️ alleen POST/PUT/PATCH body | ✅ ook GET query string uit request_example |
-| Lessons auto-extractie | ❌ Niet | 🟡 Script klaar, niet gepipeline-d, wacht op data |
-| Test-gaming detection | Alleen via Judge (inconsistent) | ✅ ook via extractor's refusal-discipline |
-
-### Open
-
-- Validatie-runs over diverse task-types: hoe robuust is 1-attempt success buiten simpele kleur-conversie?
-- Eerste echte lesson-extractie zodra multi-attempt success post-fix optreedt
-- Lessons-extractor pipeline-integratie (auto-call post-success) — pas zinvol als handmatige extractie iets oplevert
-- Functional tester uitbreiden met negatieve scenarios (4xx paden expliciet testen)
-- Cumulative history blijft onvalidated tot complexere taken weer multi-attempt nodig hebben
-- Domain detection few-shot (future.txt): niet gestart
-- Schema-first DB services (future.txt): geparkeerd
-
-### Aanbevolen vervolg
-
-1. Validatie-runs over 3-5 verschillende task-types (stateful, multi-endpoint, scraper, externe validatie). Identificeer welke complexiteit nog multi-attempt nodig heeft.
-2. Bij eerste multi-attempt success: extractor handmatig draaien, beoordelen of gegenereerde lesson zinvol is.
-3. Bij positief resultaat van (2): pipeline-integratie. Niet eerder — geen punt om injectie te bouwen voor een lege DB.
----
-
-## 2026-05-07 Sessie samenvatting
-
-### Bereikt
-
-- **Rollback**: main staat op stable iter3-base (`7a4d09e` ancestry). Iter5 broken commits gearchiveerd als `main-archive-2026-05-06`. Drie sanity-tests bevestigen werking.
-- **Phase 5A — HEALTHCHECK**: alle gegenereerde services hebben nu een Python-based HEALTHCHECK directive. Geverifieerd op `md5_hash_service` (`Up X seconds (healthy)`).
-- **Baseline metrics**: `scripts/factory_baseline.py` aggregeert pipeline-statistieken uit job logs. Eerste snapshot in `docs/baseline-2026-05-06.md`. Pre-fix cijfers: 51.9% success, 22.2% first-attempt APPROVED, 0% premium usage waargenomen.
-- **Pipeline failure logging**: `failure_context` per attempt (issues, test_output_excerpt, failing_criteria), `traceback` + `error_type` + `error_during_attempt` in top-level errors. Alle failures vanaf nu gestructureerd vastgelegd.
-- **Developer prompt — incremental retry**: preservation-rules vooraan, visuele markers, onderscheid tester-fail vs judge-reject. Empirisch gevalideerd op twee tasks: Roman numerals (was 7-att fail → werd 2-att success), ISBN validator (success).
-- **build_feedback polish**: parset functional smoke JSON om concrete scenario-failures in `issues` te zetten.
-- **Incremental log persistence**: log wordt nu na elke attempt naar disk geschreven, live visibility tijdens runs mogelijk.
-
-### Empirische vondst
-
-De retry-loop was **regeneratief, niet incrementeel**. Empirisch bewijs: Roman numerals run pre-fix had attempt_4 met passing tests, daarna attempts 5-7 weer falend — de Developer brak werkende code terwijl hij Judge-feedback adresseerde. De prompt-fix lijkt dit op te lossen (n=2 datapunten).
-
-### Status updates
-
-| Component | Was | Nu |
-|---|---|---|
-| RQ pipeline (iter5) | ❌ Broken | ✅ Teruggerold, Phase 5A incrementeel werkend |
-| Per-attempt failure logging | ❌ Missing | ✅ Geïmplementeerd |
-| Live visibility tijdens runs | ❌ Geen | ✅ Incrementeel log persist |
-| Retry-mechanisme | Regeneratief | Edits-preserving (prompt-level) |
-| Failure data structuur | Alleen pass/fail | Issues, test output, criteria |
-
-### Open
-
-- Lessons auto-extractie: nog niet gestart, maar nu haalbaar dankzij gestructureerde `failure_context`
-- Phase 5B (non-root user): bewust niet gedaan
-- Domain detection few-shot: niet gedaan
-- Schema-first DB services: geparkeerd
-- Robuustheid prompt-fix: nog n=2 validatie-runs, te weinig voor sterke claims
-
-### Aanbevolen vervolg (toekomstige sessies)
-
-1. Meer validatie-runs over diverse task-types (data parsing, API services, file processing) om robuustheid prompt-fix te bevestigen
-2. Lessons auto-extractie ontwerp + implementatie nu de input-data klopt
-3. Re-baseline na N nieuwe runs om effect prompt-fix kwantitatief te meten
----
-Quick Status
-Component	State	Last verified
-Orchestrator VM (192.168.128.197)	✅ Working	2026-05-05
-Worker VM (192.168.129.82)	✅ Working	2026-05-05
-Storage VM (192.168.129.20)	✅ Working	2026-05-05
-Memory service (port 8765)	✅ Working	2026-05-05
-Redis (port 6379)	✅ Working	2026-05-05
-Postgres 18 (port 5432)	✅ Working	2026-05-04
-RQ pipeline (Iterations 1-3)	✅ Last working state	2026-05-04
-RQ pipeline (Iteration 5)	❌ Broken	2026-05-05
-Auto-push to GitHub	✅ Working	2026-05-04
-Memory + lessons	⚠️ Partial — projects yes, lessons not auto-extracted	2026-05-04
----
-Working Components
-Orchestrator VM
-Python 3.12 venv at `\~/ai-factory/venv/`
-All factory dependencies installed (fastapi, uvicorn, structlog, sqlalchemy, etc.)
-Git config: `user.name="David Vanc"`, push works
-`.env` has all keys (OpenRouter, Firecrawl, Postgres password, DATABASE_URL)
-Can run `python submit.py "..."` to enqueue jobs
-Worker VM
-Python 3.12 venv at `\~/ai-factory-worker/venv/`
-Same dependencies as Orchestrator
-Git config: `user.name="AI Factory Worker"`, `user.email="worker@ai-factory.local"`
-SSH key registered with GitHub
-RQ worker can be started with `rq worker --url redis://192.168.129.20:6379 factory`
-Storage VM
-Memory Service (systemd)
-File: `/home/david/memory-service/server.py`
-SQLite database: `/home/david/memory-service/factory.db`
-Tables:
-`projects` — every run logged
-`lessons` — learning extraction (not auto-populated yet)
-`port\_allocations` — incremental from 8001
-Endpoints all functional:
-`GET /stats`
-`GET /projects?limit=N`
-`GET /lessons/relevant?task=...`
-`POST /ports/allocate?project\_name=X`
-`GET /ports`
-Redis
-Docker container or native install (verify with `docker ps | grep redis` or `systemctl status redis`)
-Port 6379, no auth
-Used by RQ for queue (DB 0) and slowapi for rate limiting (DB 1)
-Postgres 18
-Docker container at `\~/postgres/`
-Volume mount: `/var/lib/postgresql` (NOT `/data` — Postgres 18 changed layout)
-Admin user: `factory\_admin`
-Default DB: `factory\_main`
-Password: in `\~/postgres/.env`
-Reachable from Orchestrator and Worker (verified)
----
-Working Pipeline (Iteration 3 State)
-When the system was last fully working (commit prior to Iteration 4):
-Pipeline produces services with:
-✅ FastAPI with Pydantic Settings
-✅ Structured JSON logging via structlog with request IDs
-✅ `/health`, `/ready`, `/metrics`, `/docs`, `/openapi.json` endpoints
-✅ Request ID middleware
-✅ Bearer token auth (opt-in, default off)
-✅ Rate limiting via slowapi+Redis (opt-in)
-✅ Security headers (X-Content-Type-Options, X-Frame-Options, etc.)
-✅ CORS configurable via env
-✅ Request body size limit, request timeout
-✅ 80% test coverage gate
-✅ Standard contract tests (6 tests verify health/ready/metrics/headers/openapi)
-✅ ADR.md generated per service
-✅ pyproject.toml with pytest+coverage config
-✅ Dockerfile (single-stage, no security hardening yet)
-✅ docker-compose.yml
-✅ README.md with curl examples
-✅ Auto git push when APPROVED
-Verified examples that work end-to-end:
 ```bash
-# 1. uuid\_generator\_service (iteration 2)
-docker run -d --rm --name uuid -p 8012:8012 ai-factory/uuid\_generator\_service:test
-sleep 4
-curl -X POST http://localhost:8012/generate
-# Returns: {"uuid": "..."}
-docker stop uuid
+# Worker terminal 1
+cd ~/ai-factory-worker && source venv/bin/activate
+rq worker --url redis://192.168.129.20:6379 factory
 
-# 2. password\_generator\_service (iteration 3 — best example)
-docker run -d --rm --name pwd -p 8013:8013 ai-factory/password\_generator\_service:test
-sleep 4
-curl -X POST http://localhost:8013/generate -H "Content-Type: application/json" \\
-  -d '{"length": 16, "include\_digits": true, "include\_uppercase": true, "include\_lowercase": true, "include\_symbols": true}'
-# Returns: {"password": ")tPH,8Ep?M?:(3>z", "length": 16}
-docker stop pwd
+# Orchestrator terminal 2
+cd ~/ai-factory && source venv/bin/activate
+python submit.py "Make a service that..."
+```
 
-# 3. case\_converter\_service (iteration 1 polish — full template validation)
-docker run -d --rm --name cct -p 8011:8011 ai-factory/case\_converter\_service:test
-sleep 4
-curl -X POST http://localhost:8011/convert/all -H "Content-Type: application/json" \\
-  -d '{"text": "hello world example"}'
-# Returns: {"original": "hello world example", "upper": "HELLO WORLD EXAMPLE", ...}
-docker stop cct
-```
----
-Broken / Unfinished
-Iteration 4: Database Integration
-Status: Infrastructure is in place but pipeline doesn't generate DB-services automatically.
-What works:
-Postgres 18 running on Storage VM, reachable cross-VM
-`src/service\_template/database.py` async SQLAlchemy module
-Settings has DATABASE_* fields
-`init\_database()`, `close\_database()`, `database\_health\_check()` work
-Alembic helper `generate\_alembic\_setup()` exists
-Bootstrap auto-adds DB readiness check to `/ready`
-What doesn't work:
-Generating a service with `needs\_database=true` triggers test failures
-Pydantic Settings singleton + monkeypatch interaction is brittle
-Test fixtures expect SQLite for in-memory but settings stay configured for Postgres
-Coverage gate fails because `routes.py` (which uses `get\_db`) can't be tested without DB
-Resolution chosen: Default Planner to `needs\_database=false`. Build DB services by hand using the template infrastructure.
-Iteration 5: Deployment + CI/CD
-Status: 4 patches deep, last 2 days of work, NOT successfully tested end-to-end.
-What was added:
-Multi-stage Dockerfile in Builder (builder stage + runtime stage)
-Non-root user (uid 1001) in runtime stage
-HEALTHCHECK in Dockerfile
-`.dockerignore` (later partially reverted)
-`docker-compose.prod.yml` with resource limits, read_only filesystem, no-new-privileges
-GitHub Actions workflow per service (`.github/workflows/ci.yml`)
-Bugs introduced (in order of discovery):
-`.dockerignore` excluded `tests/` → pytest in image found 0 tests
-Status: ⚠️ PATCHED but not verified end-to-end
-Fix applied: removed `tests/` from `.dockerignore`
-Non-root + writable /app conflict → `pytest --cov` can't write `.coverage` data file
-Error: `Couldn't use data file '/app/.coverage.b2b37938b897.pid1.XKwmyGtx': unable to open database file`
-Status: ❌ NOT FIXED — last failing run was `calculator\_service` on 2026-05-05
-pytest cache write to `/app/.pytest\_cache` → permission denied
-Status: ✅ Fixed with `pytest -p no:cacheprovider`
-Recommendation: Roll back the multi-stage Dockerfile changes and the docker-compose.prod.yml, return to iteration 3 stable state, then redo iteration 5 piece by piece with verification.
-```bash
-# Rollback strategy
-cd \~/ai-factory
-git log --oneline | head -20
-# Find the commit before "Iteration 5" started
-git revert <commit-hash> --no-edit  # for each iteration 5 commit, in reverse order
-```
-Or alternative: keep the multi-stage build but make `appuser` writable on `/app/.coverage` and `/app/.pytest\_cache` only.
----
-Files That Need Manual Cleanup Before Continuing
-File	Issue
-`\~/ai-factory-worker/output/calculator\_service/`	Last broken attempt — delete
-`\~/ai-factory-worker/output/customer\_service/`	DB attempt — delete (or keep as reference)
-`output/` in git	Several iteration 5 broken services may be there
-```bash
-# Suggested cleanup before continuing
-cd \~/ai-factory-worker
-rm -rf output/calculator\_service output/customer\_service
+### Configuratie
 
-# On Orchestrator after rollback
-git pull
-```
----
-Outstanding Improvements (Future Work)
-High value
-Auto-extract lessons from failed runs — Memory has the table but nothing populates it from the Judge feedback or test failures. A script could parse failed runs and create lesson entries.
-Better Domain Detection — Currently uses keyword matching with LLM fallback. The LLM occasionally classifies BMI calculator as "general" instead of "scientific". A few-shot examples in the prompt would help.
-Real Scraper Consultant — David paused this after the public-sites prompt change. Could be re-attempted with structured data extraction from known-good sites (Wikipedia, government endpoints).
-Schema-First Database Services — User defines schema as YAML/JSON, system generates models + migrations + endpoints. Skips the LLM-writes-SQLAlchemy nightmare.
-Service-to-service mesh — When David's microservices need to call each other, we need a shared HTTP client with retries, circuit breakers, mutual TLS or shared API tokens.
-Nice to have
-Health check should NOT be exempt from auth (currently always public). Add `health\_auth\_required` setting.
-OpenAPI examples in `request\_example` should auto-validate against the actual Pydantic models.
-Per-service GitHub Actions could push to a real registry (currently commented out in workflow).
-Structured commit messages — "feat(service-name)" prefix per generated service.
-Multi-environment configs — `dev.env`, `staging.env`, `prod.env` templates per service.
-Low value / experimental
-Generate Kubernetes manifests alongside docker-compose
-Helm chart per service
-Distributed tracing with OpenTelemetry
-Service registration/discovery via Consul or etcd
-Web dashboard for the factory (instead of just CLI)
----
-Resource Usage
-VM resources (estimated)
-VM	CPU	RAM	Disk
-Orchestrator	2 cores	2 GB	~5 GB used
-Worker	2 cores	4 GB	~10 GB used (Docker images add up)
-Storage	1 core	1 GB	~3 GB used
-Recommended cleanup commands when disk fills
+- `~/ai-factory/.env` — API keys, IPs, DATABASE_URL
+- `src/llm/client.py` — MODEL_ROUTES + TIMEOUTS
+- `src/workflow/pipeline.py` — `max_tester_attempts=6`, `max_judge_attempts=3`
+- Service-template settings via env vars (zie `src/service_template/settings.py`)
+
+### Bekende stabiele referentievoorbeelden
+
+- `password_generator_service` (iteration 3) — full template validation
+- `case_converter_service` (iteration 1 polish) — POST /convert/all
+- `library_lending_system` (2026-05-09) — multi-resource CRUD met business rules
+
+### Disk cleanup wanneer worker vol
+
 ```bash
-# Worker — most disk-hungry
-docker system prune -a --volumes  # NUKES all unused Docker things
-docker images | grep "ai-factory" | awk '{print $3}' | xargs docker rmi  # Remove all factory images
+docker system prune -a --volumes
 ```
----
-Where Important Artifacts Live
-Where	What
-GitHub `davidvanc/ai-factory`	Source code + generated services in `output/`
-`\~/ai-factory-worker/logs/job\_\*.json`	Per-run pipeline logs (Worker)
-`\~/ai-factory/logs/run\_\*.json`	Older run logs (Orchestrator, pre-RQ era)
-`192.168.129.20:8765/stats`	Memory service stats
-Storage VM `factory.db`	SQLite with all project history
-Postgres `factory\_main`	Empty (no DB-services run yet)
----
-Summary
-The good: 13 services successfully generated, multi-VM distributed system works, enterprise-grade observability and security baked in, ~$5.70 spent for ~25 hours of agent runs.
-The not-so-good: Iteration 4 (database) and 5 (deployment) hit fundamental complexity. We have the building blocks but lost autonomous generation in the last few sessions.
-The path forward: Roll back to iteration 3, re-implement iteration 5 carefully with smaller steps and val
+
+## Resource usage
+
+| VM | CPU | RAM | Disk |
+|---|---|---|---|
+| Orchestrator | 2 cores | 2 GB | ~5 GB |
+| Worker | 2 cores | 4 GB | ~10 GB (Docker images) |
+| Storage | 1 core | 1 GB | ~3 GB |
+
+## Eerdere sessies (gearchiveerd)
+
+### 2026-05-08 — Cumulative history + lessons-extractor v1 + functional tester GET-querystring fix
+
+- Per-attempt code snapshots in `logs/snapshots/{job_id}/attempt_N/`
+- Failing tests parsed per attempt (ANSI-tolerant)
+- `failure_history` cross-attempt feedback
+- Lessons-extractor v1 als standalone script (`scripts/extract_lessons.py`)
+- functional_tester `urlencode(request_example)` voor GET requests
+
+### 2026-05-07 — Rollback iter5 + Phase 5A HEALTHCHECK + per-attempt failure logging
+
+- main op stable iter3-base, iter5 broken commits gearchiveerd als `main-archive-2026-05-06`
+- Phase 5A HEALTHCHECK: alle services hebben Python-based HEALTHCHECK
+- Pipeline failure logging gestructureerd (failure_context per attempt)
+- Developer prompt incremental retry rules
+- Incremental log persistence
+
+## Iteration 4 (Database Integration) — bewust afgeschaald
+
+In-memory storage is de default voor gegenereerde services. LLM-die-SQLAlchemy-schrijft was te brittle (Pydantic Settings monkeypatch issues, coverage gate fails op routes met DB-dependency). Resolution: Planner default `needs_database=false`, DB-services met de hand bouwen op de template-infrastructuur. `src/service_template/database.py` async SQLAlchemy is klaar en werkt. Schema-First (TODO #2) is de ware oplossing.
