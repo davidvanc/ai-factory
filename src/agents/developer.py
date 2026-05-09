@@ -197,35 +197,32 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
          assert r.status_code == 422
 
 0d. TEST ISOLATION (kritisch - voorkomt flaky tests in CI):
-   - Heeft je service module-level state (counters, dicts, lists in storage.py of vergelijkbaar)?
-     Dan MOET je test-isolatie expliciet regelen, anders lekt state tussen tests.
-   - Stappen die je verplicht moet zetten:
-     1. Exporteer een reset functie uit de module met state:
-        # src/storage.py
-        _items: dict = {{}}
-        _counter: int = 0
-
-        def reset_state() -> None:
-            global _counter
-            _items.clear()
-            _counter = 0
-     2. Roep deze aan voor ELKE test via een autouse fixture in tests/conftest.py
-        (NIET alleen in test_routes.py - de fixture moet álle tests dekken,
-        inclusief unit tests die de logic-functies direct aanroepen):
+   - Heeft je service module-level state? Dan plaats je de reset-fixture op TWEE plaatsen:
+     1. In `tests/conftest.py` (canoniek):
         # tests/conftest.py
         import pytest
-        from src.storage import reset_state
-
+        from src.database import reset_state
+        
         @pytest.fixture(autouse=True)
         def _reset_state_between_tests():
             reset_state()
             yield
-   - Als meerdere modules state hebben (bv. storage.py én cache.py): één
-     reset functie per module, beide aanroepen in dezelfde fixture.
-   - Doel: élke test start met schone state, ongeacht testvolgorde.
-   - Stateloze services (pure computatie zoals een unit converter) hebben
-     deze regel niet nodig - sla 'm dan over.
-
+     
+     2. EN ook in elk test-bestand (test_routes.py, test_logic.py, etc.) — backstop:
+        # tests/test_routes.py (bovenaan, vóór de eerste test)
+        import pytest
+        from src.database import reset_state
+        
+        @pytest.fixture(autouse=True)
+        def _reset_state_between_tests():
+            reset_state()
+            yield
+   - Reden voor de duplicatie: in deze build/test omgeving firet de
+     conftest.py autouse fixture in sommige configuraties niet betrouwbaar.
+     Empirisch is "in beide plaatsen" de stabiele oplossing.
+   - Stateloze services (pure computatie) hebben deze regel niet nodig.
+   - reset_state() functie zelf: gebruik `dict.clear()` voor in-place mutatie
+     (NIET `_dict = {}` rebind), en `global ...` voor counters.
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/
