@@ -1,27 +1,79 @@
 import json
+from typing import Optional, Dict, Any, List
+
 from src.llm.client import LLMClient
+from src.llm.json_utils import extract_json
+
 
 class DeveloperAgent:
     def __init__(self):
         self.llm = LLMClient()
 
-    def run(self, plan: dict, feedback: dict = None, role_override: str = "developer") -> dict:
-        feedback_section = ""
-        if feedback:
-            previous_code = ""
-            if feedback.get("previous_files"):
-                previous_code = "\n\n=== JE VORIGE CODE (kopieer letterlijk over wat je niet hoeft te wijzigen) ===\n"
-                for f in feedback["previous_files"]:
-                    previous_code += f"\n--- {f['path']} ---\n{f['content']}\n"
+    def run(
+        self,
+        plan: Dict[str, Any],
+        feedback: Optional[Dict[str, Any]] = None,
+        role_override: str = "developer",
+    ) -> Dict[str, Any]:
+        feedback_section = self._build_feedback_section(feedback) if feedback else ""
+        prompt = self._build_full_prompt(plan, feedback_section)
 
-            # Onderscheid tester-fail vs judge-rejection
-            summary = feedback.get('summary', '') or ''
-            is_judge_rejection = 'Tests failed' not in summary
+        response = self.llm.generate(prompt, role=role_override, temperature=0.2)
 
-            history_block = ""
-            if feedback.get("history"):
-                history_lines = "\n".join(feedback["history"])
-                history_block = f"""
+        result = extract_json(response, expect="object")
+        if result is None:
+            raise ValueError(
+                f"Developer: kon geen JSON extraheren uit response "
+                f"(lengte {len(response)}). Eerste 200 chars: {response[:200]}"
+            )
+        return result
+
+    # =========================
+    # FEEDBACK BUILDING
+    # =========================
+
+    def _build_feedback_section(self, feedback: Dict[str, Any]) -> str:
+        previous_code = self._format_previous_code(feedback.get("previous_files"))
+        history_block = self._format_history(feedback.get("history"))
+        preservation_block = self._build_preservation_block(feedback)
+
+        summary = feedback.get("summary", "Geen samenvatting")
+        issues = json.dumps(feedback.get("issues", []), indent=2, ensure_ascii=False)
+        test_output = (feedback.get("test_output") or "")[:3000]
+
+        return f"""
+{history_block}
+{preservation_block}
+
+=== GERAPPORTEERDE PROBLEMEN ===
+Samenvatting: {summary}
+
+Specifieke issues:
+{issues}
+
+Test output (laatste 3000 chars):
+{test_output}
+{previous_code}
+
+🔄 NU: gebruik je vorige code als basis. Kopieer alle ongewijzigde files identiek over.
+   Pas alleen de specifieke regels aan die de gerapporteerde failures veroorzaakten.
+"""
+
+    def _format_previous_code(self, files: Optional[List[Dict[str, str]]]) -> str:
+        if not files:
+            return ""
+        parts = [
+            "\n\n=== JE VORIGE CODE (kopieer letterlijk over wat je niet hoeft te wijzigen) ===\n"
+        ]
+        for f in files:
+            parts.append(f"\n--- {f['path']} ---\n{f['content']}\n")
+        return "".join(parts)
+
+    def _format_history(self, history: Optional[List[str]]) -> str:
+        if not history:
+            return ""
+        history_lines = "\n".join(history)
+        return f"""
 📜 GESCHIEDENIS VAN ALLE EERDERE FAILURES IN DEZE RUN:
 
 {history_lines}
@@ -36,7 +88,11 @@ hardcoded shortcuts. Als je beide niet tegelijk kunt: kies eerlijke tester-fails
 boven hacks.
 """
 
-            preservation_block = """
+    def _build_preservation_block(self, feedback: Dict[str, Any]) -> str:
+        summary = feedback.get("summary", "") or ""
+        is_judge_rejection = "Tests failed" not in summary
+
+        block = """
 🚨 RETRY MODE — LEES DIT EERST EN ZORGVULDIG 🚨
 
 Dit is GEEN nieuwe taak. Je hebt eerder al een (deels) werkende versie geschreven. Je taak NU is
@@ -53,30 +109,19 @@ ABSOLUTE REGELS (overtreden = falen):
 5. Bij twijfel "fix versus herschrijf": kies altijd fixen.
 """
 
-            if is_judge_rejection:
-                preservation_block += """
+        if is_judge_rejection:
+            block += """
 ⚠️ EXTRA: in je vorige poging slaagden ALLE tests. De Judge heeft alleen kwaliteits-issues gemarkeerd.
    Los die op ZONDER ook maar één test te breken. Test-compatibiliteit is hard requirement, niet optioneel.
 """
+        return block
 
-            feedback_section = f"""
-{history_block}
-{preservation_block}
+    # =========================
+    # MAIN PROMPT
+    # =========================
 
-=== GERAPPORTEERDE PROBLEMEN ===
-Samenvatting: {feedback.get('summary', 'Geen samenvatting')}
-
-Specifieke issues:
-{json.dumps(feedback.get('issues', []), indent=2, ensure_ascii=False)}
-
-Test output (laatste 3000 chars):
-{feedback.get('test_output', 'Geen test output')[:3000]}
-{previous_code}
-
-🔄 NU: gebruik je vorige code als basis. Kopieer alle ongewijzigde files identiek over.
-   Pas alleen de specifieke regels aan die de gerapporteerde failures veroorzaakten.
-"""
-        prompt = f"""Je bent een expert Python developer. Schrijf alle code voor dit project:
+    def _build_full_prompt(self, plan: Dict[str, Any], feedback_section: str) -> str:
+        return f"""Je bent een expert Python developer. Schrijf alle code voor dit project:
 
 Project: {plan['project_name']}
 Beschrijving: {plan['description']}
@@ -151,6 +196,36 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
          r = client.post("/convert", json=dict(hex="ZZZ"))
          assert r.status_code == 422
 
+0d. TEST ISOLATION (kritisch - voorkomt flaky tests in CI):
+   - Heeft je service module-level state (counters, dicts, lists in storage.py of vergelijkbaar)?
+     Dan MOET je test-isolatie expliciet regelen, anders lekt state tussen tests.
+   - Stappen die je verplicht moet zetten:
+     1. Exporteer een reset functie uit de module met state:
+        # src/storage.py
+        _items: dict = {}
+        _counter: int = 0
+
+        def reset_state() -> None:
+            global _counter
+            _items.clear()
+            _counter = 0
+     2. Roep deze aan voor ELKE test via een autouse fixture in tests/conftest.py
+        (NIET alleen in test_routes.py - de fixture moet álle tests dekken,
+        inclusief unit tests die de logic-functies direct aanroepen):
+        # tests/conftest.py
+        import pytest
+        from src.storage import reset_state
+
+        @pytest.fixture(autouse=True)
+        def _reset_state_between_tests():
+            reset_state()
+            yield
+   - Als meerdere modules state hebben (bv. storage.py én cache.py): één
+     reset functie per module, beide aanroepen in dezelfde fixture.
+   - Doel: élke test start met schone state, ongeacht testvolgorde.
+   - Stateloze services (pure computatie zoals een unit converter) hebben
+     deze regel niet nodig - sla 'm dan over.
+
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/
@@ -207,11 +282,3 @@ Antwoord ALLEEN met dit JSON formaat - GEEN andere tekst:
     {{"path": "tests/test_module.py", "content": "..."}}
   ]
 }}"""
-
-        response = self.llm.generate(prompt, role=role_override, temperature=0.2)
-
-        from src.llm.json_utils import extract_json
-        result = extract_json(response, expect="object")
-        if result is None:
-            raise ValueError(f"Developer: kon geen JSON extraheren uit response (lengte {len(response)}). Eerste 200 chars: {response[:200]}")
-        return result
