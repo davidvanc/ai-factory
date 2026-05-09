@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 from src.models import TodoCreate, TodoUpdate, TodoResponse
 
@@ -36,7 +36,7 @@ def delete_todo(todo_id: int) -> bool:
         return True
     return False
 
-def clear_todos():
+def clear_todos() -> None:
     global _todos, _current_id
     _todos.clear()
     _current_id = 1

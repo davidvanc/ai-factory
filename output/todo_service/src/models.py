@@ -1,14 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from datetime import datetime
 
 class TodoCreate(BaseModel):
-    title: str = Field(..., min_length=1)
+    title: str
 
-class TodoUpdate(BaseModel):
-    done: bool
-
-class Todo(BaseModel):
+class TodoResponse(BaseModel):
     id: int
     title: str
     done: bool
     created_at: datetime
+
+class TodoDeleteResponse(BaseModel):
+    deleted: bool
+    id: int

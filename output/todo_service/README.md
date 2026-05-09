@@ -1,6 +1,6 @@
 # todo_service
 
-Een eenvoudige in-memory todo lijst microservice met CRUD endpoints voor todos.
+Een simpele in-memory todo list microservice met endpoints om todos toe te voegen, op te halen, te markeren als done en te verwijderen.
 
 ## Lokaal draaien
 
@@ -16,17 +16,17 @@ De service draait dan op http://localhost:8024
 
 ### POST /todos
 
-Voeg een nieuwe todo toe en retourneer het gegenereerde id
+Voegt een nieuwe todo toe en retourneert het gegenereerde id en de todo zelf
 
 ```bash
-curl -X POST http://localhost:8024/todos -H 'Content-Type: application/json' -d '{"title": "Buy groceries"}'
+curl -X POST http://localhost:8024/todos -H 'Content-Type: application/json' -d '{"title": "Boodschappen doen"}'
 ```
 
 **Response:**
 ```json
 {
   "id": 1,
-  "title": "Buy groceries",
+  "title": "Boodschappen doen",
   "done": false,
   "created_at": "2024-01-15T10:30:00.000000"
 }
@@ -34,7 +34,7 @@ curl -X POST http://localhost:8024/todos -H 'Content-Type: application/json' -d 
 
 ### GET /todos
 
-Lijst alle todos op
+Geeft een lijst van alle todos terug
 
 ```bash
 curl http://localhost:8024/todos
@@ -45,7 +45,7 @@ curl http://localhost:8024/todos
 [
   {
     "id": 1,
-    "title": "Buy groceries",
+    "title": "Boodschappen doen",
     "done": false,
     "created_at": "2024-01-15T10:30:00.000000"
   }
@@ -54,7 +54,7 @@ curl http://localhost:8024/todos
 
 ### GET /todos/{id}
 
-Haal een specifieke todo op via id
+Geeft één todo terug op basis van id. 404 als niet gevonden.
 
 ```bash
 curl http://localhost:8024/todos/1
@@ -64,7 +64,7 @@ curl http://localhost:8024/todos/1
 ```json
 {
   "id": 1,
-  "title": "Buy groceries",
+  "title": "Boodschappen doen",
   "done": false,
   "created_at": "2024-01-15T10:30:00.000000"
 }
@@ -72,17 +72,17 @@ curl http://localhost:8024/todos/1
 
 ### PATCH /todos/{id}
 
-Markeer een todo als done
+Markeert een todo als done (zet done op true). 404 als niet gevonden.
 
 ```bash
-curl -X PATCH http://localhost:8024/todos/1 -H 'Content-Type: application/json' -d '{"done": true}'
+curl -X PATCH http://localhost:8024/todos/1
 ```
 
 **Response:**
 ```json
 {
   "id": 1,
-  "title": "Buy groceries",
+  "title": "Boodschappen doen",
   "done": true,
   "created_at": "2024-01-15T10:30:00.000000"
 }
@@ -90,7 +90,7 @@ curl -X PATCH http://localhost:8024/todos/1 -H 'Content-Type: application/json' 
 
 ### DELETE /todos/{id}
 
-Verwijder een todo via id
+Verwijdert een todo op basis van id. 404 als niet gevonden.
 
 ```bash
 curl -X DELETE http://localhost:8024/todos/1

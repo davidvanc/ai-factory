@@ -1,47 +1,41 @@
+from typing import List, Optional, Dict
 from datetime import datetime
-from src.models import Todo
-from src.service_template.logging_config import get_logger
+from src.models import TodoCreate, TodoResponse
 
-log = get_logger("todo_logic")
+todos_db: Dict[int, TodoResponse] = {}
+current_id: int = 1
 
-_todos: dict[int, Todo] = {}
-_current_id: int = 1
+def get_all_todos() -> List[TodoResponse]:
+    return list(todos_db.values())
 
-def create_todo(title: str) -> Todo:
-    global _current_id
-    todo = Todo(
-        id=_current_id,
-        title=title,
+def get_todo_by_id(todo_id: int) -> Optional[TodoResponse]:
+    return todos_db.get(todo_id)
+
+def create_todo(todo_in: TodoCreate) -> TodoResponse:
+    global current_id
+    new_todo = TodoResponse(
+        id=current_id,
+        title=todo_in.title,
         done=False,
         created_at=datetime.now()
     )
-    _todos[_current_id] = todo
-    _current_id += 1
-    log.info(f"Created todo with id {todo.id}")
-    return todo
+    todos_db[current_id] = new_todo
+    current_id += 1
+    return new_todo
 
-def get_todos() -> list[Todo]:
-    return list(_todos.values())
-
-def get_todo(todo_id: int) -> Todo | None:
-    return _todos.get(todo_id)
-
-def update_todo(todo_id: int, done: bool) -> Todo | None:
-    todo = _todos.get(todo_id)
+def mark_todo_done(todo_id: int) -> Optional[TodoResponse]:
+    todo = todos_db.get(todo_id)
     if todo:
-        todo.done = done
-        _todos[todo_id] = todo
-        log.info(f"Updated todo {todo_id} done status to {done}")
+        todo.done = True
     return todo
 
 def delete_todo(todo_id: int) -> bool:
-    if todo_id in _todos:
-        del _todos[todo_id]
-        log.info(f"Deleted todo {todo_id}")
+    if todo_id in todos_db:
+        del todos_db[todo_id]
         return True
     return False
 
-def clear_todos() -> None:
-    global _todos, _current_id
-    _todos.clear()
-    _current_id = 1
+def clear_db():
+    global current_id
+    todos_db.clear()
+    current_id = 1

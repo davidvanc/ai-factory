@@ -1,6 +1,6 @@
 # todo_service
 
-Een eenvoudige in-memory todo lijst service met CRUD operaties via HTTP endpoints
+Een eenvoudige in-memory todo list microservice met CRUD endpoints voor het beheren van todos
 
 ## Lokaal draaien
 
@@ -16,7 +16,7 @@ De service draait dan op http://localhost:8024
 
 ### POST /todos
 
-Voegt een nieuwe todo toe en geeft het gegenereerde id terug
+Voeg een nieuwe todo toe en retourneer het gegenereerde id
 
 ```bash
 curl -X POST http://localhost:8024/todos -H 'Content-Type: application/json' -d '{"title": "Boodschappen doen"}'
@@ -34,10 +34,10 @@ curl -X POST http://localhost:8024/todos -H 'Content-Type: application/json' -d 
 
 ### GET /todos
 
-Geeft een lijst van alle todos terug
+Haal alle todos op
 
 ```bash
-curl http://localhost:8024/todos
+curl -X GET http://localhost:8024/todos
 ```
 
 **Response:**
@@ -54,10 +54,10 @@ curl http://localhost:8024/todos
 
 ### GET /todos/{id}
 
-Geeft een specifieke todo terug op basis van id
+Haal één specifieke todo op via id
 
 ```bash
-curl http://localhost:8024/todos/1
+curl -X GET http://localhost:8024/todos/1
 ```
 
 **Response:**
@@ -72,7 +72,7 @@ curl http://localhost:8024/todos/1
 
 ### PATCH /todos/{id}
 
-Markeert een todo als gedaan
+Markeer een todo als done
 
 ```bash
 curl -X PATCH http://localhost:8024/todos/1 -H 'Content-Type: application/json' -d '{"done": true}'
@@ -90,7 +90,7 @@ curl -X PATCH http://localhost:8024/todos/1 -H 'Content-Type: application/json' 
 
 ### DELETE /todos/{id}
 
-Verwijdert een todo op basis van id
+Verwijder een todo via id
 
 ```bash
 curl -X DELETE http://localhost:8024/todos/1
@@ -99,7 +99,7 @@ curl -X DELETE http://localhost:8024/todos/1
 **Response:**
 ```json
 {
-  "deleted": true,
+  "message": "Todo deleted",
   "id": 1
 }
 ```
