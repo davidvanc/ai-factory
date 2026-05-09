@@ -1,18 +1,18 @@
-from typing import Dict, Any
+from typing import Dict
 
-_books: Dict[int, Dict[str, Any]] = {}
-_members: Dict[int, Dict[str, Any]] = {}
-_loans: Dict[int, Dict[str, Any]] = {}
+_books: Dict[int, dict] = {}
+_members: Dict[int, dict] = {}
+_loans: Dict[int, dict] = {}
 
-_book_id_counter: int = 1
-_member_id_counter: int = 1
-_loan_id_counter: int = 1
+_book_counter: int = 0
+_member_counter: int = 0
+_loan_counter: int = 0
 
 def reset_state() -> None:
-    global _book_id_counter, _member_id_counter, _loan_id_counter
+    global _book_counter, _member_counter, _loan_counter
     _books.clear()
     _members.clear()
     _loans.clear()
-    _book_id_counter = 1
-    _member_id_counter = 1
-    _loan_id_counter = 1
+    _book_counter = 0
+    _member_counter = 0
+    _loan_counter = 0

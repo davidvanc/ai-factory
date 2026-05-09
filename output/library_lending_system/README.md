@@ -1,6 +1,6 @@
 # library_lending_system
 
-Een HTTP microservice voor het beheren van een bibliotheek uitleensysteem met boeken, leden en uitleningen. Bevat business rules voor maximaal 3 actieve leningen per lid, beschikbaarheidscontrole, en overdue tracking.
+HTTP microservice voor het beheren van een bibliotheek uitleensysteem met boeken, leden en uitleningen
 
 ## Lokaal draaien
 
@@ -16,7 +16,7 @@ De service draait dan op http://localhost:8030
 
 ### POST /books
 
-Voegt een nieuw boek toe. available_copies wordt gelijk aan total_copies gezet.
+Voeg een nieuw boek toe; available_copies wordt gelijk aan total_copies
 
 ```bash
 curl -X POST http://localhost:8030/books -H 'Content-Type: application/json' -d '{"title": "The Great Gatsby", "author": "F. Scott Fitzgerald", "isbn": "9780743273565", "total_copies": 3}'
@@ -31,16 +31,16 @@ curl -X POST http://localhost:8030/books -H 'Content-Type: application/json' -d 
   "isbn": "9780743273565",
   "available_copies": 3,
   "total_copies": 3,
-  "added_at": "2024-01-15T10:30:00"
+  "added_at": "2024-01-15T10:00:00"
 }
 ```
 
 ### GET /books
 
-Lijst alle boeken op.
+Lijst alle boeken
 
 ```bash
-curl http://localhost:8030/books
+curl -X GET http://localhost:8030/books
 ```
 
 **Response:**
@@ -53,17 +53,17 @@ curl http://localhost:8030/books
     "isbn": "9780743273565",
     "available_copies": 3,
     "total_copies": 3,
-    "added_at": "2024-01-15T10:30:00"
+    "added_at": "2024-01-15T10:00:00"
   }
 ]
 ```
 
 ### GET /books/{id}
 
-Geeft een specifiek boek terug of 404 als het niet bestaat.
+Geef één boek terug of 404
 
 ```bash
-curl http://localhost:8030/books/1
+curl -X GET http://localhost:8030/books/1
 ```
 
 **Response:**
@@ -75,13 +75,13 @@ curl http://localhost:8030/books/1
   "isbn": "9780743273565",
   "available_copies": 3,
   "total_copies": 3,
-  "added_at": "2024-01-15T10:30:00"
+  "added_at": "2024-01-15T10:00:00"
 }
 ```
 
 ### POST /members
 
-Registreert een nieuw lid met email validatie. Email moet uniek zijn.
+Registreer een lid met email validatie en uniciteit
 
 ```bash
 curl -X POST http://localhost:8030/members -H 'Content-Type: application/json' -d '{"name": "Alice Smith", "email": "alice@example.com"}'
@@ -93,16 +93,16 @@ curl -X POST http://localhost:8030/members -H 'Content-Type: application/json' -
   "id": 1,
   "name": "Alice Smith",
   "email": "alice@example.com",
-  "registered_at": "2024-01-15T10:30:00"
+  "registered_at": "2024-01-15T10:00:00"
 }
 ```
 
 ### GET /members/{id}
 
-Geeft een specifiek lid terug of 404 als het niet bestaat.
+Geef één lid terug of 404
 
 ```bash
-curl http://localhost:8030/members/1
+curl -X GET http://localhost:8030/members/1
 ```
 
 **Response:**
@@ -111,13 +111,13 @@ curl http://localhost:8030/members/1
   "id": 1,
   "name": "Alice Smith",
   "email": "alice@example.com",
-  "registered_at": "2024-01-15T10:30:00"
+  "registered_at": "2024-01-15T10:00:00"
 }
 ```
 
 ### POST /loans
 
-Maakt een nieuwe lening aan. loaned_at=now, due_at=now+14d, decrement available_copies. 422 als lid >=3 actieve leningen heeft of boek niet beschikbaar.
+Maak een uitlening aan; controleert max 3 actieve leningen en beschikbare exemplaren
 
 ```bash
 curl -X POST http://localhost:8030/loans -H 'Content-Type: application/json' -d '{"book_id": 1, "member_id": 1}'
@@ -129,8 +129,8 @@ curl -X POST http://localhost:8030/loans -H 'Content-Type: application/json' -d 
   "id": 1,
   "book_id": 1,
   "member_id": 1,
-  "loaned_at": "2024-01-15T10:30:00",
-  "due_at": "2024-01-29T10:30:00",
+  "loaned_at": "2024-01-15T10:00:00",
+  "due_at": "2024-01-29T10:00:00",
   "returned_at": null,
   "is_overdue": false
 }
@@ -138,7 +138,7 @@ curl -X POST http://localhost:8030/loans -H 'Content-Type: application/json' -d 
 
 ### POST /loans/{id}/return
 
-Markeert lening als geretourneerd. returned_at=now, increment available_copies. 422 als al geretourneerd.
+Markeer uitlening als geretourneerd; 422 als al geretourneerd
 
 ```bash
 curl -X POST http://localhost:8030/loans/1/return
@@ -150,19 +150,19 @@ curl -X POST http://localhost:8030/loans/1/return
   "id": 1,
   "book_id": 1,
   "member_id": 1,
-  "loaned_at": "2024-01-15T10:30:00",
-  "due_at": "2024-01-29T10:30:00",
-  "returned_at": "2024-01-20T10:30:00",
+  "loaned_at": "2024-01-15T10:00:00",
+  "due_at": "2024-01-29T10:00:00",
+  "returned_at": "2024-01-20T10:00:00",
   "is_overdue": false
 }
 ```
 
 ### GET /loans
 
-Geeft alle actieve leningen terug (waar returned_at is null).
+Lijst alle actieve uitleningen (returned_at is null)
 
 ```bash
-curl http://localhost:8030/loans
+curl -X GET http://localhost:8030/loans
 ```
 
 **Response:**
@@ -172,8 +172,8 @@ curl http://localhost:8030/loans
     "id": 1,
     "book_id": 1,
     "member_id": 1,
-    "loaned_at": "2024-01-15T10:30:00",
-    "due_at": "2024-01-29T10:30:00",
+    "loaned_at": "2024-01-15T10:00:00",
+    "due_at": "2024-01-29T10:00:00",
     "returned_at": null,
     "is_overdue": false
   }
@@ -182,10 +182,10 @@ curl http://localhost:8030/loans
 
 ### GET /members/{id}/loans
 
-Geeft alle leningen (actief en geretourneerd) voor een specifiek lid.
+Lijst alle uitleningen van een specifiek lid
 
 ```bash
-curl http://localhost:8030/members/1/loans
+curl -X GET http://localhost:8030/members/1/loans
 ```
 
 **Response:**
@@ -195,8 +195,8 @@ curl http://localhost:8030/members/1/loans
     "id": 1,
     "book_id": 1,
     "member_id": 1,
-    "loaned_at": "2024-01-15T10:30:00",
-    "due_at": "2024-01-29T10:30:00",
+    "loaned_at": "2024-01-15T10:00:00",
+    "due_at": "2024-01-29T10:00:00",
     "returned_at": null,
     "is_overdue": false
   }
