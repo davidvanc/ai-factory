@@ -6,6 +6,70 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+def _slice_previous_files(prev_files: list, feedback_text: str) -> tuple[list, list]:
+    """
+    Beperk previous_files bij retry om truncation te voorkomen.
+
+    Returns:
+        (full_files, manifest_entries)
+        - full_files: files met volledige content (relevant voor feedback + always-include)
+        - manifest_entries: filename + line count + eerste regel voor de rest
+
+    Always-include: test files, conftest.py, main.py/app.py.
+    Plus: alle files waarvan de filename voorkomt in feedback text.
+
+    Safety valve: als niks matcht (geen files genoemd, geen tests in payload),
+    retourneer alle files. Beter risico op truncation dan blind regenereren.
+    """
+    if not prev_files:
+        return [], []
+
+    auto_paths = set()
+    for f in prev_files:
+        path = f.get("path", "")
+        basename = path.split("/")[-1]
+        if "test_" in path or path.endswith("_test.py") or "/tests/" in path:
+            auto_paths.add(path)
+        elif basename in ("main.py", "app.py", "__main__.py", "conftest.py"):
+            auto_paths.add(path)
+
+    mentioned_paths = set()
+    fb_lower = (feedback_text or "").lower()
+    for f in prev_files:
+        path = f.get("path", "")
+        basename = path.split("/")[-1].lower()
+        if basename and basename in fb_lower:
+            mentioned_paths.add(path)
+        elif path.lower() in fb_lower:
+            mentioned_paths.add(path)
+
+    full_set = auto_paths | mentioned_paths
+
+    if not full_set:
+        return list(prev_files), []
+
+    full_files = []
+    manifest_entries = []
+    for f in prev_files:
+        path = f.get("path", "")
+        if path in full_set:
+            full_files.append(f)
+        else:
+            content = f.get("content", "") or ""
+            lines = content.count("\n") + 1 if content else 0
+            first_line = ""
+            for line in content.split("\n"):
+                stripped = line.strip()
+                if stripped:
+                    first_line = stripped[:80]
+                    break
+            manifest_entries.append({
+                "path": path,
+                "lines": lines,
+                "first_line": first_line,
+            })
+
+    return full_files, manifest_entries
 
 def _snapshot_attempt_files(attempt_num: int, dev_result: dict, snapshot_dir: Path):
     """Bewaar de gegenereerde files per attempt voor latere lesson-extractie."""
@@ -129,7 +193,18 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             "test_output": test_output[-3000:]
         }
         if prev_dev:
-            fb["previous_files"] = prev_dev.get("files", [])
+            matching_text = " ".join([
+                verdict.get("verdict_reason", "") or "",
+                " ".join(issues),
+                test_output[-3000:],
+            ])
+            full_files, manifest = _slice_previous_files(
+                prev_dev.get("files", []),
+                matching_text,
+            )
+            fb["previous_files"] = full_files
+            if manifest:
+                fb["other_files_manifest"] = manifest
         return fb
 
     def _tester_failure_context(feedback):
