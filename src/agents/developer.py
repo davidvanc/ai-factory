@@ -195,34 +195,45 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
      def test_convert_rejects_invalid_hex(client):
          r = client.post("/convert", json=dict(hex="ZZZ"))
          assert r.status_code == 422
-
 0d. TEST ISOLATION (kritisch - voorkomt flaky tests in CI):
-   - Heeft je service module-level state? Dan plaats je de reset-fixture op TWEE plaatsen:
-     1. In `tests/conftest.py` (canoniek):
+   - Heeft je service module-level state (counters, dicts, lists in storage.py of vergelijkbaar)?
+     Dan MOET je de reset-fixture op TWEE plaatsen zetten. Empirisch is gebleken dat in deze
+     build/test-omgeving de conftest.py autouse fixture niet altijd betrouwbaar firet —
+     dezelfde fixture in het test-bestand zelf firet wel. Belt-and-suspenders is de stabiele oplossing.
+   - Stappen die je verplicht moet zetten:
+     1. Exporteer een reset functie uit de module met state:
+        # src/database.py (of src/storage.py)
+        _items: dict = {{}}
+        _counter: int = 0
+
+        def reset_state() -> None:
+            global _counter
+            _items.clear()
+            _counter = 0
+     2. Voeg de autouse fixture toe in tests/conftest.py:
         # tests/conftest.py
         import pytest
         from src.database import reset_state
-        
+
         @pytest.fixture(autouse=True)
         def _reset_state_between_tests():
             reset_state()
             yield
-     
-     2. EN ook in elk test-bestand (test_routes.py, test_logic.py, etc.) — backstop:
-        # tests/test_routes.py (bovenaan, vóór de eerste test)
+     3. EN voeg dezelfde fixture óók toe bovenaan elk test-bestand
+        (test_routes.py, test_logic.py, etc.) als backstop:
+        # tests/test_routes.py (vóór de eerste test)
         import pytest
         from src.database import reset_state
-        
+
         @pytest.fixture(autouse=True)
         def _reset_state_between_tests():
             reset_state()
             yield
-   - Reden voor de duplicatie: in deze build/test omgeving firet de
-     conftest.py autouse fixture in sommige configuraties niet betrouwbaar.
-     Empirisch is "in beide plaatsen" de stabiele oplossing.
+   - reset_state() zelf: gebruik dict.clear() voor in-place mutatie
+     (NIET _dict = {{}} rebind), en `global ...` voor counters.
    - Stateloze services (pure computatie) hebben deze regel niet nodig.
-   - reset_state() functie zelf: gebruik `dict.clear()` voor in-place mutatie
-     (NIET `_dict = {}` rebind), en `global ...` voor counters.
+
+
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
    - Tests in tests/
