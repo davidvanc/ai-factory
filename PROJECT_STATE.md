@@ -1,16 +1,71 @@
 Project State
-> \*\*Last updated\*\*: May 8, 2026
+> \*\*Last updated\*\*: May 9, 2026
 >
 > Snapshot of every component's current state. Read this before making changes.
 
-### Bekende issue (2026-05-08)
+### Bekende issue (2026-05-08) — RESOLVED 2026-05-09
 
-- Bij retry-attempts (>2) met grote previous_files kan de Developer-response truncated raken
-  (LLM output wordt afgekapt onder context-druk), wat resulteert in een ValueError uit extract_json.
-  Geobserveerd op een todo-list run met 3+ attempts. Niet structureel — komt niet voor bij
-  simpele tasks of attempts 1-2.
-- Mogelijke mitigaties (toekomstig): previous_files snijden bij retry-attempts (alleen de files
-  die in de feedback genoemd worden), of extract_json tolerant maken voor truncated JSON.
+- Truncation bij retry-attempts (>2) met grote `previous_files` is opgelost in de
+  2026-05-09 sessie via slicing van `previous_files` op feedback-relevantie en
+  auto-include set (test files, conftest, main entry). Zie 2026-05-09 sessie.
+
+## 2026-05-09 Sessie samenvatting
+
+### Bereikt
+
+- **Truncation-fix via previous_files slicing** in `pipeline.py`. Helper `_slice_previous_files` filtert files op (a) auto-include [test files, conftest.py, main.py/app.py/__main__.py] + (b) files genoemd in feedback-tekst. Rest komt mee als `other_files_manifest` (path + line count + first line). Safety valve: bij geen matches valt terug op alle files.
+- **Functional tester herschreven**: plan-driven, httpx ipv curl-subprocess, regex path-param injectie (vangt `{id}`, `{todo_id}`, `{user_id}`, etc.), state tracking via POST→captured id, lenient status check (elke 2xx tenzij plan expliciet `expected_status` zet), GET met `request_example` als query string.
+- **Validatie-runs post-fix**: 5 diverse task-types, alle 5 first-attempt APPROVED, gemiddeld ~2 min per run:
+  - `todo_service` (single-resource CRUD met path params — de bug-trigger case)
+  - `blog_service` (nested resources, posts + comments)
+  - `movie_search_service` (CRUD + filtering)
+  - `user_registration_service` (CRUD met EmailStr/UUID validatie)
+  - `unit_converter_service` (computatie, stateless)
+
+### Empirische bevindingen
+
+- **Pre-fix baseline was 22.2% first-attempt APPROVED. Post-fix: 5/5 op deze batch.** n is klein, maar de spreiding (CRUD, nested, filters, validatie, computatie) is breed genoeg om sterk signaal te geven dat de combinatie van fixes de happy path solid maakt.
+- **De truncation-bug was secundair**. De echte oorzaak van de oorspronkelijke todo-loop was de functional_tester die `{id}` placeholders niet substitueerde — zelfde patroon als de GET-querystring vondst van 2026-05-08, andere variant. Bevestiging: bij rare loops eerst de tester checken voor de Developer-prompt aanraakt.
+- **State-overwrite limiet in tester**: blog_service slaagde toevallig omdat `post_id_counter` en `comment_id_counter` beide op 1 starten. Zou gefaald hebben bij verschillende tellers. Echte beperking surfaced via een fragile pass — niet via failure.
+- **Querystring code-path is dead in de praktijk**: Planner zet `request_example: {}` voor GET endpoints, dus de querystring-tweak in de tester wordt nooit aangeroepen. Pytest dekt filter-logica via TestClient. Geen actie nodig.
+- **Recurring Judge-flags over 3 services met state**:
+  - POST 200 ipv 201 (3/3)
+  - Module-level state niet gereset tussen tests (3/3)
+  - Geen healthcheck in docker-compose (3/3)
+  
+  Developer lost deze niet uit zichzelf op, ondanks dat de Judge ze identiek flagt. Patroon, niet incident.
+
+### Status updates
+
+| Component | Was | Nu |
+|---|---|---|
+| Truncation bug bij retry | ⚠️ Bekend, geobserveerd | ✅ Gefixt via previous_files slicing |
+| Functional tester | Plan-driven curl, geen path-param sub | Plan-driven httpx, regex path-injectie, state tracking, lenient status |
+| Validatie post-fix | n=0 | ✅ n=5, 100% first-attempt APPROVED |
+| Cumulative failure history | Latent, n=0 | Latent (geen multi-attempt cases gezien) |
+
+### Open / TODO (in prioriteit)
+
+1. **Test-isolation richtlijn in Developer-prompt** (HOOGSTE).
+   Empirisch onderbouwd: 3/3 services met state werden door Judge geflagd voor module-level state die niet tussen tests gereset wordt. Developer lost dit niet uit zichzelf op. Concreet: aan de Developer-prompt een regel toevoegen dat services met module-level state verplicht een `reset_*()` functie krijgen plus een autouse `conftest.py` fixture die deze tussen tests aanroept. Lage effort, hoge impact — raakt élke gegenereerde service met state. Verificatie: validatie-batch opnieuw draaien (5 tasks), kijken of de Judge-flag verdwijnt.
+
+2. **Domain detection few-shot** (LAAG, niet urgent).
+   Anekdotisch bewijs: BMI-calculator werd ooit als 'general' geclassificeerd ipv 'scientific'. De 5 validatie-tasks gingen prima zonder specialized detection. Lage effort: paar examples in de Planner-prompt. Lage urgentie: geen recente empirische trigger. Pak op zodra een echte misclassificatie weer wordt waargenomen.
+
+3. **Tester per-resource state tracking** (MIDDEL, latent).
+   Blog-run legde de limiet bloot: `state["id"]` is één slot, wordt bij elke POST overschreven. Werkt in 80%+ van CRUD-cases, faalt bij multi-resource flows met andere id-conventies. Niet urgent want huidige tasks slagen; wel iets om te onthouden voor wanneer een echte failure zich aandient.
+
+4. **Lessons-extractor handmatig draaien + pipeline-integratie** (CONDITIONEEL).
+   Wacht op een multi-attempt success. Met de huidige fix-stand zeldzaam. Niet doen voor er data is.
+
+5. **Cumulative failure history validatie** (CONDITIONEEL).
+   Zelfde reden: geen multi-attempt cases.
+
+### Aanbevolen vervolg
+
+Begin met **(1) test-isolation prompt-patch**. Verifieer door de validatie-batch opnieuw te draaien — als de Judge-flag verdwijnt over alle 5 tasks, win bevestigd. Halve dag werk inclusief verificatie. Pas daarna kijken of (2) of (3) opportuun is.
+
+---
 
 ## 2026-05-08 Sessie samenvatting
 
