@@ -1,7 +1,57 @@
 Project State
-> \*\*Last updated\*\*: May 5, 2026
+> \*\*Last updated\*\*: May 8, 2026
 >
 > Snapshot of every component's current state. Read this before making changes.
+
+### Bekende issue (2026-05-08)
+
+- Bij retry-attempts (>2) met grote previous_files kan de Developer-response truncated raken
+  (LLM output wordt afgekapt onder context-druk), wat resulteert in een ValueError uit extract_json.
+  Geobserveerd op een todo-list run met 3+ attempts. Niet structureel — komt niet voor bij
+  simpele tasks of attempts 1-2.
+- Mogelijke mitigaties (toekomstig): previous_files snijden bij retry-attempts (alleen de files
+  die in de feedback genoemd worden), of extract_json tolerant maken voor truncated JSON.
+
+## 2026-05-08 Sessie samenvatting
+
+### Bereikt
+
+- **Per-attempt code snapshots**: `logs/snapshots/{job_id}/attempt_N/files.json` per attempt geschreven door `_snapshot_attempt_files` in pipeline.py. Maakt diff-based lesson-extractie mogelijk.
+- **Failing tests in log**: pytest-failures per attempt geparsed via `_extract_test_names` (ANSI-tolerant) en opgenomen als `failing_tests` veld. Functional smoke failures blijven in `failure_context.issues`.
+- **Cumulative failure history (Fix A)**: pipeline houdt `failure_history` bij door de hele run, geeft die door aan de Developer prompt als `📜 GESCHIEDENIS` block met cross-attempt framing ("ALLE issues tegelijkertijd oplossen, geen hack-cyclus"). Latent geïmplementeerd — niet gevalideerd onder echte multi-attempt condities omdat die zeldzaam werden na de hieronder genoemde fix.
+- **Lessons-extractor v1**: standalone script `scripts/extract_lessons.py`. Eligibility-checks (success + final_attempt ≥ 2 + snapshots aanwezig + APPROVED gevonden), snapshot-loading, prompt-assembly, LLM-aanroep via `role="planner"` (Opus). Refusal-paden gevalideerd. Refusal-discipline werkt: extractor weigert lessen te bouwen op test-gaming "fixes" die door Judge geslipt zijn — fungeert als second-opinion op de Judge.
+- **Key fix — functional_tester**: ontdekt dat `request_example` alleen werd gebruikt voor POST/PUT/PATCH (als body), niet voor GET (als query string). Resultaat: GET endpoints werden zonder parameters getest, wat de Developer dwong tot hardcoded fallbacks om "tester pass" te halen. De "approved" code bevatte daardoor structureel test-gaming hacks die de Judge inconsistent ving. Fix: `urlencode(request_example)` toegevoegd voor GET requests in `_run_service_tests`. Twee opeenvolgende 1-attempt successes na de fix (hex_color_converter + één andere taak).
+
+### Empirische vondst
+
+Het regression-loop patroon (tester-fail → hack → judge-fail → tester-fail) was **niet primair een Developer-prompt probleem**. Het was een gevolg van een verkeerd ontworpen test-vraag: een endpoint zonder verplichte parameter werd getest met `expected: 2xx` wat alleen via een hardcoded default haalbaar is. De Developer reageerde rationeel op een onmogelijke vraag. Conclusie: bij rare loops eerst checken of de tester een eerlijke vraag stelt voordat aan prompts wordt getrokken.
+
+### Status updates
+
+| Component | Was | Nu |
+|---|---|---|
+| Per-attempt code snapshots | ❌ Missing | ✅ `logs/snapshots/{job_id}/attempt_N/files.json` |
+| Failing tests in log | ❌ Missing | ✅ `failing_tests` veld per attempt |
+| Cumulative failure history | ❌ Niet | ✅ Geïmplementeerd, latent (n=0 echte validatie) |
+| Functional tester realisme | ⚠️ alleen POST/PUT/PATCH body | ✅ ook GET query string uit request_example |
+| Lessons auto-extractie | ❌ Niet | 🟡 Script klaar, niet gepipeline-d, wacht op data |
+| Test-gaming detection | Alleen via Judge (inconsistent) | ✅ ook via extractor's refusal-discipline |
+
+### Open
+
+- Validatie-runs over diverse task-types: hoe robuust is 1-attempt success buiten simpele kleur-conversie?
+- Eerste echte lesson-extractie zodra multi-attempt success post-fix optreedt
+- Lessons-extractor pipeline-integratie (auto-call post-success) — pas zinvol als handmatige extractie iets oplevert
+- Functional tester uitbreiden met negatieve scenarios (4xx paden expliciet testen)
+- Cumulative history blijft onvalidated tot complexere taken weer multi-attempt nodig hebben
+- Domain detection few-shot (future.txt): niet gestart
+- Schema-first DB services (future.txt): geparkeerd
+
+### Aanbevolen vervolg
+
+1. Validatie-runs over 3-5 verschillende task-types (stateful, multi-endpoint, scraper, externe validatie). Identificeer welke complexiteit nog multi-attempt nodig heeft.
+2. Bij eerste multi-attempt success: extractor handmatig draaien, beoordelen of gegenereerde lesson zinvol is.
+3. Bij positief resultaat van (2): pipeline-integratie. Niet eerder — geen punt om injectie te bouwen voor een lege DB.
 ---
 
 ## 2026-05-07 Sessie samenvatting
