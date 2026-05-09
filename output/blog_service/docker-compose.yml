@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8026:8026"
+    env_file:
+      - .env
+    restart: unless-stopped
