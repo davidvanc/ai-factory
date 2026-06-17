@@ -83,6 +83,9 @@ nano .env                        # vul OPENROUTER_API_KEY in
 
 Dat is alles. De memory-database (`data/factory.db`) maakt zichzelf aan bij de eerste run.
 
+> **Op een verse VM draaien?** Zie [`deploy/`](deploy/README.md): Terraform maakt een
+> Ubuntu-VM (Proxmox of Azure) en Ansible installeert alles automatisch.
+
 ---
 
 ## Gebruik

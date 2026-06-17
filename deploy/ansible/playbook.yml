@@ -1,0 +1,156 @@
+---
+# Provisioneert een lege Ubuntu-VM tot een klaar-voor-gebruik AI Factory.
+#
+# Draai dit vanaf je controle-machine (waar deze repo staat):
+#   cd deploy/ansible
+#   ansible-galaxy collection install ansible.posix      # eenmalig
+#   ansible-playbook -i inventory.ini playbook.yml \
+#       -e "openrouter_api_key=sk-or-..."
+#
+# Daarna op de VM:
+#   cd ~/ai-factory && source venv/bin/activate && python main.py "..."
+
+- name: Deploy AI Factory op één Ubuntu-machine
+  hosts: ai_factory
+  become: true
+
+  vars:
+    app_user: "{{ ansible_user }}"
+    app_dir: "/home/{{ app_user }}/ai-factory"
+    # Lokale repo-root die naar de VM gekopieerd wordt (relatief t.o.v. dit playbook).
+    local_repo_path: "{{ playbook_dir }}/../.."
+    docker_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+    # Verplicht (geef mee via -e of een ansible-vault vars-bestand):
+    openrouter_api_key: ""
+    # Optioneel:
+    firecrawl_api_key: ""
+    git_user_name: "AI Factory"
+    git_user_email: "ai-factory@localhost"
+
+  tasks:
+    - name: Controleer dat de OpenRouter-key is meegegeven
+      ansible.builtin.assert:
+        that: openrouter_api_key | length > 0
+        fail_msg: >-
+          Geef de key mee, bv.:
+          ansible-playbook ... -e "openrouter_api_key=sk-or-..."
+
+    - name: Basis-pakketten installeren
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - git
+          - rsync
+          - python3
+          - python3-venv
+          - python3-pip
+        state: present
+        update_cache: true
+
+    # ---- Docker (officiële repo) ----
+    - name: Keyrings-map aanmaken
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Docker GPG-key ophalen
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Docker apt-repo toevoegen
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ docker_arch }} signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Docker Engine + Compose-plugin installeren
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Gebruiker in de docker-groep zetten
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: true
+
+    - name: Docker-service starten en inschakelen
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    # ---- De factory-code (lokale kopie) ----
+    - name: App-directory aanmaken
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Repo naar de VM synchroniseren
+      become: false
+      ansible.posix.synchronize:
+        src: "{{ local_repo_path }}/"
+        dest: "{{ app_dir }}/"
+        delete: false
+        rsync_opts:
+          - "--exclude=venv"
+          - "--exclude=.venv"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+          - "--exclude=logs/"
+          - "--exclude=data/factory.db"
+          - "--exclude=.env"
+          - "--exclude=deploy/terraform/**/.terraform"
+
+    # ---- Python-omgeving ----
+    - name: Virtualenv + dependencies installeren
+      become: false
+      ansible.builtin.pip:
+        requirements: "{{ app_dir }}/requirements.txt"
+        virtualenv: "{{ app_dir }}/venv"
+        virtualenv_command: python3 -m venv
+
+    # ---- Configuratie ----
+    - name: .env schrijven (bestaande wordt niet overschreven)
+      become: false
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+        force: false
+
+    - name: Git-identiteit zetten (nodig voor auto-push van gegenereerde services)
+      become: false
+      ansible.builtin.command:
+        cmd: "git config user.{{ item.key }} '{{ item.value }}'"
+        chdir: "{{ app_dir }}"
+      loop:
+        - { key: "name", value: "{{ git_user_name }}" }
+        - { key: "email", value: "{{ git_user_email }}" }
+      changed_when: false
+
+    - name: Klaar
+      ansible.builtin.debug:
+        msg: >-
+          AI Factory geïnstalleerd in {{ app_dir }}.
+          Gebruik:  ssh {{ app_user }}@<ip>  →
+          cd ai-factory && source venv/bin/activate &&
+          python main.py "Maak een service die X doet".
+          Let op: voor het pushen van output naar GitHub heeft de VM nog
+          git-push-credentials nodig (zie deploy/README.md).

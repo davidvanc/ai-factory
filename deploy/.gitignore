@@ -1,0 +1,12 @@
+# Terraform state en lokale secrets - nooit committen
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Ansible
+inventory.ini
+*.retry
+vault.yml

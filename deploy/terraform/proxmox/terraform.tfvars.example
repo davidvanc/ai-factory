@@ -1,0 +1,18 @@
+# Kopieer naar terraform.tfvars en vul in.
+proxmox_endpoint  = "https://192.168.128.1:8006/"
+proxmox_api_token = "terraform@pve!tf=00000000-0000-0000-0000-000000000000"
+proxmox_node      = "pve"
+
+template_vm_id = 9000          # VMID van je Ubuntu cloud-init template
+vm_name        = "ai-factory"
+vm_cores       = 2
+vm_memory_mb   = 4096
+vm_disk_gb     = 20
+vm_datastore   = "local-lvm"
+vm_bridge      = "vmbr0"
+
+vm_ipv4    = "dhcp"            # of bv. "192.168.128.50/23"
+vm_gateway = ""               # bv. "192.168.128.1" bij statisch IP
+ci_user    = "ubuntu"
+
+ssh_public_key = "ssh-ed25519 AAAA... jij@machine"

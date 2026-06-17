@@ -1,0 +1,9 @@
+# Kopieer naar terraform.tfvars en vul in.
+# Authenticatie verloopt via `az login` (Azure CLI) vóór `terraform apply`.
+name_prefix      = "ai-factory"
+location         = "westeurope"
+vm_size          = "Standard_B2s"
+disk_size_gb     = 30
+admin_username   = "ubuntu"
+allowed_ssh_cidr = "203.0.113.7/32"   # zet op je eigen publieke IP
+ssh_public_key   = "ssh-ed25519 AAAA... jij@machine"
