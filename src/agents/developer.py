@@ -266,7 +266,7 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Geen short flags (-x) als alternatief tenzij expliciet gevraagd
    - Argument-namen moeten matchen met wat een gebruiker zou verwachten
 
-7. EXTERNE DATA - LEZ DIT ZORGVULDIG:
+7. EXTERNE DATA - LEES DIT ZORGVULDIG:
    - Als de taak data vereist van een specifieke website, gebruik HTML scraping (requests + BeautifulSoup)
    - Vermijd API's die een API key vereisen (tenzij expliciet vermeld in de plan/context)
    - Als het plan een specifieke API noemt zoals "Open-Meteo" - gebruik die

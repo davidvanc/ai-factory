@@ -15,7 +15,7 @@ DOMAIN_KEYWORDS = {
         "physics", "fysica", "physical", "chemistry", "chemie", "chemical",
         "scientific", "wetenschappelijk", "wetenschap",
         "formula", "formule", "research", "onderzoek", "studie",
-        "molecule", "dna", "rna", "protein", "eiwit","formule",
+        "molecule", "dna", "rna", "protein", "eiwit",
         "diagnosis", "diagnose", "drug", "medicatie", "medicijn", "dosage", "dosering",
         "statistical", "statistisch", "p-value", "correlation", "correlatie",
         "regression", "regressie", "hypothesis", "hypothese",
