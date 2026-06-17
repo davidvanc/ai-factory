@@ -1,5 +1,6 @@
 """
-De factory pipeline als één aanroepbare functie - voor RQ workers.
+De factory pipeline als één aanroepbare functie.
+Wordt synchroon aangeroepen vanuit main.py — geen queue, geen worker.
 """
 import json
 import time

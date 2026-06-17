@@ -10,6 +10,10 @@ __pycache__/
 # Logs
 logs/
 
+# Lokale memory database (SQLite) - lokale staat, niet committen
+data/factory.db
+data/factory.db-*
+
 # Per-project secrets in alle output projecten
 output/**/.env
 

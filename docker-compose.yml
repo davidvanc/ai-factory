@@ -1,0 +1,25 @@
+# Optionele lokale Postgres — ALLEEN nodig wanneer een gegenereerde service
+# een database vereist (needs_database=true). De factory zelf gebruikt dit niet.
+#
+# Starten wanneer nodig:   docker compose up -d postgres
+# Stoppen daarna:          docker compose down
+#
+# Zet in je .env dan ook:
+#   DATABASE_ENABLED=true
+#   DATABASE_URL=postgresql://factory_admin:factory_local@localhost:5432/factory_main
+services:
+  postgres:
+    image: postgres:18
+    container_name: factory-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factory_admin
+      POSTGRES_PASSWORD: factory_local
+      POSTGRES_DB: factory_main
+    ports:
+      - "5432:5432"
+    volumes:
+      - factory_pgdata:/var/lib/postgresql
+
+volumes:
+  factory_pgdata:

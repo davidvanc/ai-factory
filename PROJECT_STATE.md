@@ -4,17 +4,16 @@ markdown# Project State
 > **Status**: Stable post-validation milestone — 6/6 task-types first-attempt APPROVED
 > **Branchable from**: tag `v2026-05-09-validated`
 
+> **Architectuur-update juni 2026**: van 3 VM's naar 1 machine. Redis/RQ-queue en de HTTP Memory-service zijn verwijderd; memory is nu lokale SQLite (`data/factory.db`), `submit.py` is weg en `main.py` draait de pipeline synchroon. Zie de banner bovenaan `HANDOVER.md`.
+
 ## Quick Status
 
 | Component | State |
 |---|---|
-| Orchestrator VM (192.168.128.197) | ✅ Working |
-| Worker VM (192.168.129.82) | ✅ Working |
-| Storage VM (192.168.129.20) | ✅ Working |
-| Memory service (port 8765) | ✅ Working |
-| Redis (port 6379) | ✅ Working |
-| Postgres 18 (port 5432) | ✅ Working (ongebruikt door pipeline by design) |
-| RQ pipeline | ✅ Working — first-attempt approved op typische CRUD + computatie |
+| Lokale orchestrator (`python main.py`) | ✅ Working — één proces, geen VM's |
+| Memory (SQLite, `data/factory.db`) | ✅ Working — vervangt de HTTP Memory-service |
+| Postgres 18 (on-demand via docker compose) | ✅ Working (ongebruikt door pipeline by design) |
+| Pipeline | ✅ Working — first-attempt approved op typische CRUD + computatie |
 | Auto-push to GitHub | ✅ Working |
 | Functional tester | ✅ Plan-driven, stateful, regex path-param injectie |
 | Test-isolation in gegenereerde services | ✅ Belt-and-suspenders (conftest + test files) |
@@ -83,34 +82,19 @@ Anekdotisch BMI-classificatie issue. Geen recente empirische trigger. Lage effor
 Phase 5A (HEALTHCHECK) gedaan. Phase 5B (non-root user + multi-stage Dockerfile + .github/workflows/ci.yml) staat geparkeerd. Opnieuw oppakken als concentrated effort, vergelijkbaar met Schema-First.
 
 ## Architectuur (compact)
-┌──────────────────────┐
-│  Orchestrator VM     │  ← submit jobs hier
-│  192.168.128.197     │
-└──────────┬───────────┘
-│ enqueue
-▼
-┌──────────────────────┐
-│  Storage VM          │
-│  192.168.129.20      │
-│  - Redis :6379       │
-│  - Memory :8765      │
-│  - Postgres :5432    │
-└──────────┬───────────┘
-│ dequeue
-▼
-┌──────────────────────┐
-│  Worker VM           │
-│  192.168.129.82      │
-│  Pipeline:           │
-│   Planner            │
-│   Developer          │
-│   Builder            │
-│   Tester             │
-│   Judge              │
-│   → git push         │
-└──────────────────────┘
+┌──────────────────────────────────────────┐
+│  Jouw machine                            │
+│  python main.py "..."                     │
+│    → run_factory_pipeline() (synchroon)   │
+│  Pipeline:                                │
+│   Planner → Developer → Builder           │
+│        → Tester → Judge → git push        │
+│  data/factory.db   ← lokale memory        │
+│  Docker            ← build + test         │
+│  (optioneel) Postgres via docker compose  │
+└──────────────────────────────────────────┘
 
-Flow per job: Planner → Developer (met retry-feedback indien nodig) → Builder → Tester (pytest + functional smoke) → Judge → git push.
+Flow per job: Planner → Developer (met retry-feedback indien nodig) → Builder → Tester (pytest + functional smoke) → Judge → git push. Eén proces, geen queue.
 
 ## Models per role
 
@@ -131,18 +115,13 @@ Globale `max_tokens: 32000`. Per-role timeouts: planner 180s, developer 600s, pr
 ### Daily workflow
 
 ```bash
-# Worker terminal 1
-cd ~/ai-factory-worker && source venv/bin/activate
-rq worker --url redis://192.168.129.20:6379 factory
-
-# Orchestrator terminal 2
-cd ~/ai-factory && source venv/bin/activate
-python submit.py "Make a service that..."
+cd ai-factory && source venv/bin/activate   # Windows: venv\Scripts\activate
+python main.py "Make a service that..."
 ```
 
 ### Configuratie
 
-- `~/ai-factory/.env` — API keys, IPs, DATABASE_URL
+- `.env` — API keys + optionele DATABASE_URL (zie `.env.example`)
 - `src/llm/client.py` — MODEL_ROUTES + TIMEOUTS
 - `src/workflow/pipeline.py` — `max_tester_attempts=6`, `max_judge_attempts=3`
 - Service-template settings via env vars (zie `src/service_template/settings.py`)

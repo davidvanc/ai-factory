@@ -1,0 +1,6 @@
+# Dependencies voor de factory zelf (de orchestrator).
+# De gegenereerde services krijgen hun eigen deps in hun Docker-image
+# (zie src/agents/builder.py -> guaranteed_test_deps).
+requests>=2.31
+python-dotenv>=1.0
+httpx>=0.27

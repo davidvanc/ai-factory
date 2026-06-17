@@ -1,12 +1,20 @@
 AI Software Factory — Handover Document
-> \*\*Purpose\*\*: Capture the complete context of this multi-VM AI software factory so that any future Claude session, or the owner (David), can pick up exactly where we left off without losing months of architectural decisions and battle-tested fixes.
+> \*\*Purpose\*\*: Capture the complete context of this AI software factory so that any future Claude session, or the owner (David), can pick up exactly where we left off without losing months of architectural decisions and battle-tested fixes.
 >
-> \*\*Last updated\*\*: May 5, 2026
+> \*\*Last updated\*\*: June 17, 2026
 > \*\*Owner\*\*: David Vanc (basic Linux skills, learning project mindset)
 > \*\*Repo\*\*: https://github.com/davidvanc/ai-factory (private)
+
+> **⚠️ ARCHITECTUUR-UPDATE (juni 2026) — van 3 VM's naar 1 machine.**
+> Het systeem draaide oorspronkelijk over 3 Proxmox-VM's (Orchestrator + Worker + Storage) met een Redis/RQ-queue en een aparte HTTP Memory-service. Dat is overkill voor een project dat een paar keer per jaar draait. Nu draait alles op **één machine** in één proces:
+> - **Redis/RQ + Worker-VM weg** — `python main.py "..."` roept `run_factory_pipeline()` direct synchroon aan. `submit.py` is verwijderd.
+> - **Memory-service + Storage-VM weg** — `src/llm/memory_client.py` is nu een lokale **SQLite**-store (`data/factory.db`) met exact dezelfde interface.
+> - **Postgres** — niet langer permanente infra; enkel on-demand via de root `docker-compose.yml` wanneer een gegenereerde service een database nodig heeft.
+>
+> De secties 2, 3, 4 en 10 hieronder zijn bijgewerkt. De historische "Major Lessons" (sectie 6) en ADRs (sectie 7) verwijzen nog naar de oude opzet — dat is bewust, als logboek. Voor het dagelijks gebruik: zie `README.md`.
 ---
 1. What This System Is
-An autonomous multi-agent AI software factory running across 3 Proxmox VMs. Given a natural language description of a desired microservice, the system:
+An autonomous multi-agent AI software factory running on a single machine. Given a natural language description of a desired microservice, the system:
 Plans the project architecture (Planner agent)
 Optionally consults specialists (Scientific/Scraper consultants)
 Generates code (Developer agent — Gemini Pro Latest)
@@ -14,59 +22,58 @@ Builds Docker images (Builder agent)
 Tests via pytest + functional HTTP smoke tests
 Has a Judge agent rate the result
 Auto-pushes approved services to GitHub
-Stores lessons learned in a central memory service
+Stores lessons learned in a local memory store (SQLite)
 The system iterates with retries when tests fail, escalates to premium models on the last attempt, and detects "no progress" patterns to bail out gracefully.
 ---
 2. Infrastructure
-VMs
-All on Proxmox, Ubuntu 22.04 Server, IPs reserved via DHCP on the router:
-VM	Role	IP	Subnet	Gateway	Owner
-Orchestrator	Pipeline coordinator, agents	192.168.128.197	192.168.128.247/23	192.168.128.1	user `david`
-Worker	RQ worker that runs pipelines	192.168.129.82	192.168.128.247/23	192.168.128.1	user `david`
-Storage	Memory service + Redis + Postgres	192.168.129.20	192.168.128.247/23	192.168.128.1	user `david`
-A pre-existing Plex VM was left untouched.
-Services on Storage VM
-Service	Port	Purpose
-Memory service (FastAPI + SQLite)	8765	Project history, lessons, port allocations
-Redis	6379	RQ queue + rate limit backend (DB 0 and 1)
-Postgres 18	5432	Persistent database (Docker container)
+Eén machine. Geen VM-cluster meer.
+Vereisten:
+- Python 3.11+ met een venv (`pip install -r requirements.txt`)
+- Docker (de Builder/Tester bouwt en draait Linux-containers)
+- git met ingestelde identiteit + push-rechten op de repo
+- Een OpenRouter API-key
+
+Geen permanente achtergronddiensten:
+Component	Was	Nu
+Queue	Redis + RQ + Worker-VM	weg — `main.py` draait de pipeline synchroon
+Memory	HTTP-service op Storage-VM (:8765)	lokale SQLite in `data/factory.db`
+Postgres	altijd-aan op Storage-VM	on-demand via root `docker-compose.yml`, enkel als een service het nodig heeft
 Critical Git Configuration
-The Worker had `user.name` and `user.email` empty, causing silent push failures (the pipeline reported success but nothing was pushed). Fixed with:
+Een lege `user.name`/`user.email` veroorzaakt een stille push-failure (de pipeline meldt succes maar er wordt niets gepusht). Stel daarom in:
 ```bash
-git config --global user.name "AI Factory Worker"
-git config --global user.email "worker@ai-factory.local"
+git config --global user.name "Jouw Naam"
+git config --global user.email "jij@voorbeeld.com"
 ```
-This is essential — without it, you lose generated services.
-SSH Keys
-Both Orchestrator and Worker have their own SSH keys for GitHub:
-Orchestrator: labeled `ai-factory-orchestrator`
-Worker: labeled `Worker VM`
-Both have read+write to the private repo `davidvanc/ai-factory`.
-API Keys (in `.env` on both Orchestrator and Worker)
+This is essential — without it, you lose generated services. `_push_to_git` in `pipeline.py` controleert dit nu expliciet en faalt luid.
+API Keys (in `.env`, zie `.env.example`)
 ```
 OPENROUTER\_API\_KEY=sk-or-...
-FIRECRAWL\_API\_KEY=fc-...
-POSTGRES\_PASSWORD=<chosen by user, contains @ which must be URL-encoded as %40>
-DATABASE\_URL=postgresql://factory\_admin:<password-with-%40>@192.168.129.20:5432/factory\_main
-DATABASE\_ENABLED=true
+FIRECRAWL\_API\_KEY=fc-...           # optioneel, alleen voor scraping-consultant
+MEMORY\_DB=./data/factory.db        # optioneel, dit is de default
+# Alleen wanneer een gegenereerde service een DB nodig heeft:
+DATABASE\_ENABLED=false
+DATABASE\_URL=postgresql://factory\_admin:factory\_local@localhost:5432/factory\_main
 ```
-The `@` in the postgres password needs URL-encoding (`%40`) in `DATABASE\_URL` because the `@` is a URL parser delimiter.
+`.env` staat in `.gitignore` — nooit committen.
 ---
 3. Code Layout
-Orchestrator: `/home/david/ai-factory/`
+Eén repo, op je eigen machine:
 ```
 ai-factory/
-├── main.py                         # Direct CLI entry (legacy, retry-loop logic still here)
-├── submit.py                       # RQ enqueue helper
+├── main.py                         # DE entry point: python main.py "taak"
+├── diagnose.py                     # Debug helper (her-test een bestaand project)
 ├── show\_log.py                     # Debug helper
-├── diagnose.py                     # Debug helper
+├── requirements.txt                # Factory-deps (requests, python-dotenv, httpx)
+├── docker-compose.yml              # Optionele lokale Postgres (on-demand)
+├── .env.example                    # Template voor .env
 ├── .env                            # Secrets (NOT in git)
+├── data/factory.db                 # Lokale memory (SQLite, auto-aangemaakt)
 ├── venv/                           # Python virtualenv
 │
 ├── src/
 │   ├── llm/
 │   │   ├── client.py               # LLMClient with streaming, prompt caching, idle timeout
-│   │   ├── memory\_client.py        # HTTP client to Storage VM Memory service
+│   │   ├── memory\_client.py        # Lokale SQLite memory store (data/factory.db)
 │   │   └── json\_utils.py           # Robust JSON extraction with brace counting
 │   │
 │   ├── agents/
@@ -99,38 +106,19 @@ ai-factory/
 │   │   └── pyproject\_template.toml # pytest + coverage config
 │   │
 │   └── workflow/
-│       └── pipeline.py             # The factory pipeline as a callable RQ function
+│       └── pipeline.py             # De factory pipeline als één aanroepbare functie
 │
 ├── output/                         # Generated services (also pushed to GitHub)
 └── logs/                           # Per-run JSON logs
 ```
-Worker: `/home/david/ai-factory-worker/`
-Identical structure; obtained via `git clone`. Has its own venv with the same dependencies. The Worker pulls from GitHub and runs `rq worker`.
-Storage: `/home/david/memory-service/`
-```
-memory-service/
-├── server.py                       # FastAPI service
-├── factory.db                      # SQLite database
-└── memory-service.service          # systemd unit
-```
-Started as a systemd service called `memory-service`.
-Storage: `/home/david/postgres/`
-```
-postgres/
-├── docker-compose.yml              # Postgres 18 container
-└── .env                            # POSTGRES\_PASSWORD
-```
-Volume mount is `/var/lib/postgresql` (NOT `/var/lib/postgresql/data`) — Postgres 18 changed the layout.
+De memory zit nu in `data/factory.db` (auto-aangemaakt bij de eerste run). De optionele Postgres komt uit de root `docker-compose.yml` — geen aparte map of VM meer.
 ---
 4. The Pipeline Flow
 ```
-User runs: python submit.py "Make a service that does X"
+User runs: python main.py "Make a service that does X"
      │
      ▼
-Job enqueued to Redis at 192.168.129.20:6379, queue "factory"
-     │
-     ▼
-Worker picks up job, calls run\_factory\_pipeline(task)
+main.py roept run\_factory\_pipeline(task) synchroon aan (zelfde proces)
      │
      ▼
 ┌────────────────────────────────────────────────────────┐
@@ -160,7 +148,7 @@ Worker picks up job, calls run\_factory\_pipeline(task)
 │    - Writes pyproject.toml with coverage gate          │
 │    - Writes ADR.md                                     │
 │    - Writes .gitignore, .dockerignore                  │
-│    - Allocates unique port from Memory service         │
+│    - Allocates unique port from lokale memory (SQLite) │
 └────────────────────────────────────────────────────────┘
      │
      ▼
@@ -350,34 +338,25 @@ Attempted	Why it failed
 `calculator\_service`	Iteration 5 broken — read-only filesystem + non-root user
 ---
 10. Critical Commands Reference
-Start RQ Worker
+Run a Job
 ```bash
-# On Worker VM
-cd \~/ai-factory-worker
-source venv/bin/activate
-rq worker --url redis://192.168.129.20:6379 factory
+cd ai-factory
+source venv/bin/activate          # Windows: venv\Scripts\activate
+python main.py "Make a service that does X"
 ```
-Submit a Job
-```bash
-# On Orchestrator
-cd \~/ai-factory
-source venv/bin/activate
-python submit.py "Make a service that does X"
-```
-Inspect Memory
+Inspect Memory (lokale SQLite)
 ```bash
 # Stats
-curl -s http://192.168.129.20:8765/stats | python3 -m json.tool
+python -c "from src.llm.memory_client import MemoryClient; import json; print(json.dumps(MemoryClient().get_stats(), indent=2))"
 
-# All allocated ports
-curl -s http://192.168.129.20:8765/ports | python3 -m json.tool
+# Toegewezen poorten
+python -c "from src.llm.memory_client import MemoryClient; import json; print(json.dumps(MemoryClient().list_ports(), indent=2))"
 
-# Recent projects
-curl -s http://192.168.129.20:8765/projects?limit=10 | python3 -m json.tool
+# Of rechtstreeks met de sqlite3 CLI:
+sqlite3 data/factory.db "SELECT project_name, status, attempts FROM projects ORDER BY id DESC LIMIT 10;"
 ```
 Test a Generated Service
 ```bash
-# On Worker
 docker run -d --rm --name test-svc -p PORT:PORT ai-factory/SERVICE\_NAME:test
 sleep 4
 curl -s http://localhost:PORT/health
@@ -385,15 +364,13 @@ docker stop test-svc
 ```
 Inspect Last Run Log
 ```bash
-ls -t \~/ai-factory-worker/logs/job\_\*.json | head -1 | xargs cat | python3 -m json.tool
+ls -t logs/job\_\*.json | head -1 | xargs cat | python3 -m json.tool
 ```
-Check Postgres
+Postgres (alleen on-demand, voor DB-services)
 ```bash
-# From Storage VM
-docker exec -it postgres psql -U factory\_admin -d factory\_main
-
-# From any VM
-psql -h 192.168.129.20 -U factory\_admin -d factory\_main -c "SELECT version();"
+docker compose up -d postgres                       # start lokale Postgres
+docker exec -it factory-postgres psql -U factory\_admin -d factory\_main
+docker compose down                                 # stop hem weer
 ```
 ---
 11. The 5-Iteration Enterprise Path
@@ -421,8 +398,8 @@ Always one logical step at a time
 Check understanding before making big changes
 When something fails, diagnose first, fix later
 Workflow rules established
-Always commit and push to GitHub — never sync via direct file copy between VMs
-Work on Orchestrator, push, pull on Worker
+Always commit and push to GitHub — dat is hoe gegenereerde services bewaard worden
+Alles draait nu lokaal op één machine (geen Orchestrator/Worker-sync meer)
 When in doubt about syntax errors, send the full corrected file rather than incremental nano edits
 Stop and pause when David says he's lost; don't push forward
 Acknowledge mistakes openly; don't pretend things are working when they're not
