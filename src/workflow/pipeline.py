@@ -377,7 +377,7 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         # Memory bijwerken
         try:
             memory = MemoryClient()
-            memory.add_project(
+            project_id = memory.add_project(
                 project_name=plan.get("project_name", "unknown"),
                 task=task,
                 description=plan.get("description", ""),
@@ -387,6 +387,31 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                                  for a in run_log["attempts"].values()),
                 metadata={"final_attempt": attempt, "log_file": str(log_file)}
             )
+
+            # Lessen uit de mislukte pogingen. Zonder dit blijft de
+            # lessons-tabel leeg terwijl de planner hem wel uitleest.
+            if failure_history:
+                from src.agents.lesson_extractor import extraheer_lessen
+                lessen = extraheer_lessen(
+                    task=task,
+                    plan=plan,
+                    failure_history=failure_history,
+                    status=status,
+                    attempts=attempt,
+                )
+                for les in lessen:
+                    memory.add_lesson(
+                        category=les["category"],
+                        pattern=les["pattern"],
+                        fix=les.get("fix"),
+                        project_id=project_id,
+                    )
+                if lessen:
+                    print(f"[memory] {len(lessen)} les(sen) opgeslagen:")
+                    for les in lessen:
+                        print(f"         [{les['category']}] {les['pattern']}")
+                else:
+                    print("[memory] geen generaliseerbare lessen uit deze run")
         except Exception as e:
             print(f"[memory] {e}")
 

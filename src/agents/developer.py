@@ -21,11 +21,22 @@ import json
 from typing import Optional, Dict, Any, List
 
 from src.llm.client import LLMClient
+from src.llm.json_utils import extract_json
 
 # Bestanden die contracten vastleggen waar de rest zich aan moet houden.
 # Die gaan eerst, zodat latere bestanden ze letterlijk in hun context krijgen.
 CONTRACT_BESTANDEN = (
     "constants.py", "types.py", "errors.py", "config.py", "models.py", "schemas.py",
+)
+
+# Foutmeldingen die zeggen "de afspraak zelf klopt niet", niet "deze regel is fout".
+# Bij een van deze gaan de contractbestanden mee in de herschrijfset, ook als hun
+# naam nergens in de traceback staat - anders repareert de pipeline om de
+# oorzaak heen en blijft die staan.
+CONTRACT_SIGNALEN = (
+    "importerror", "modulenotfounderror", "attributeerror", "nameerror",
+    "has no attribute", "unexpected keyword argument", "cannot import name",
+    "validation error", "field required", "is not defined",
 )
 
 
@@ -65,10 +76,20 @@ class DeveloperAgent:
                 flush=True,
             )
 
+        gecontroleerd = False
+        nieuw_contract = False
+
         for i, pad in enumerate(paden, 1):
             if pad not in opnieuw and pad in vorige:
                 geschreven.append({"path": pad, "content": vorige[pad]})
                 continue
+
+            # Zodra de contracten staan en er iets op gebouwd gaat worden:
+            # eerst controleren. Daarna is corrigeren veel duurder, want dan
+            # heeft alles zich er al naar gevormd.
+            if not gecontroleerd and self._is_bouwbestand(pad) and nieuw_contract:
+                geschreven = self._controleer_contracten(plan, geschreven, role_override)
+                gecontroleerd = True
 
             print(f"[developer] bestand {i}/{len(paden)}: {pad}", flush=True)
             staart = self._staart(pad, geschreven, vorige.get(pad))
@@ -82,8 +103,110 @@ class DeveloperAgent:
             if not inhoud.strip() and not pad.endswith("__init__.py"):
                 raise ValueError(f"Developer: leeg antwoord voor {pad}")
             geschreven.append({"path": pad, "content": inhoud})
+            if self._is_contract(pad):
+                nieuw_contract = True
 
         return {"files": geschreven}
+
+    # =========================
+    # CONTRACTCONTROLE
+    # =========================
+
+    @staticmethod
+    def _is_contract(pad: str) -> bool:
+        return pad.split("/")[-1] in CONTRACT_BESTANDEN
+
+    @staticmethod
+    def _is_bouwbestand(pad: str) -> bool:
+        """Alles wat op de contracten voortbouwt: logica, routes, main, tests."""
+        naam = pad.split("/")[-1]
+        return naam != "__init__.py" and naam not in CONTRACT_BESTANDEN
+
+    def _controleer_contracten(
+        self,
+        plan: Dict[str, Any],
+        geschreven: List[Dict[str, str]],
+        role_override: str,
+    ) -> List[Dict[str, str]]:
+        """Houdt de contractbestanden tegen het plan voor de rest erop gebouwd wordt.
+
+        Een fout contract is het duurste soort fout in deze opzet: elk volgend
+        bestand krijgt het letterlijk mee en plooit zich ernaar, tests incluis.
+        Zo'n project komt door de tester heen en is toch verkeerd. Deze controle
+        kost een kleine aanroep over kleine bestanden.
+        """
+        contracten = [f for f in geschreven if self._is_contract(f["path"])]
+        if not contracten:
+            return geschreven
+
+        code = "\n\n".join(f"--- {f['path']} ---\n{f['content']}" for f in contracten)
+        prompt = f"""Je controleert de datacontracten van een service voordat de rest erop gebouwd wordt.
+
+Dit is het plan:
+Beschrijving: {plan['description']}
+Endpoints: {json.dumps(plan.get('endpoints', []), indent=2, ensure_ascii=False)}
+Tests die straks moeten slagen: {json.dumps(plan['tests'], indent=2, ensure_ascii=False)}
+
+Dit zijn de geschreven contractbestanden:
+{code}
+
+Controleer ALLEEN deze punten:
+1. Kan elk endpoint uit het plan zijn request en response opbouwen met deze modellen?
+2. Ontbreken er velden die de geplande tests nodig hebben?
+3. Kloppen de types en de verplicht/optioneel-keuzes met wat het plan beschrijft?
+4. Zijn er velden of klassen die nergens voor dienen?
+
+Beoordeel NIET de stijl, de naamgeving of de implementatie. Alleen of de
+contracten kloppen met het plan.
+
+Antwoord met alleen JSON:
+{{"ok": true}}
+of
+{{"ok": false, "problemen": ["concreet probleem 1", "concreet probleem 2"]}}"""
+
+        print("[developer] contractcontrole...", flush=True)
+        try:
+            antwoord = self.llm.generate(prompt, role="contract_review", temperature=0.0)
+            oordeel = extract_json(antwoord, expect="object")
+        except Exception as e:
+            # De controle mag de pipeline nooit tegenhouden.
+            print(f"[developer] contractcontrole overgeslagen: {e}", flush=True)
+            return geschreven
+
+        if not oordeel or oordeel.get("ok") is not False:
+            print("[developer] contractcontrole: ok", flush=True)
+            return geschreven
+
+        problemen = oordeel.get("problemen") or []
+        print(f"[developer] contractcontrole: {len(problemen)} probleem(en), "
+              f"contracten worden herschreven", flush=True)
+        for pr in problemen:
+            print(f"           - {pr}", flush=True)
+
+        # Eenmalig herstellen. Blijft het fout, dan vangt de tester het verderop
+        # op; nog een ronde hier maakt het vooral duurder.
+        hersteld = []
+        for f in geschreven:
+            if not self._is_contract(f["path"]):
+                hersteld.append(f)
+                continue
+            herstel_prompt = f"""{prompt}
+
+=== GEVONDEN PROBLEMEN ===
+{json.dumps(problemen, indent=2, ensure_ascii=False)}
+
+Herschrijf nu {f['path']} zodat deze problemen opgelost zijn. Wijzig niets anders.
+Antwoord met ALLEEN de volledige inhoud van {f['path']}, geen uitleg, geen fences."""
+            try:
+                nieuwe = self._strip_fences(
+                    self.llm.generate(herstel_prompt, role=role_override, temperature=0.2)
+                )
+                hersteld.append({"path": f["path"], "content": nieuwe or f["content"]})
+            except Exception as e:
+                print(f"[developer] herstel van {f['path']} mislukt ({e}), "
+                      f"oorspronkelijke versie blijft staan", flush=True)
+                hersteld.append(f)
+        return hersteld
 
     # =========================
     # WELKE BESTANDEN, IN WELKE VOLGORDE
@@ -139,6 +262,29 @@ class DeveloperAgent:
 
         # Bestanden die nog niet bestaan moeten sowieso geschreven worden.
         opnieuw |= {p for p in paden if p not in vorige}
+
+        tekst = " ".join([
+            str(feedback.get("summary", "")),
+            json.dumps(feedback.get("issues", []), ensure_ascii=False),
+            str(feedback.get("test_output", "") or ""),
+        ]).lower()
+
+        # Ruikt het naar een contractprobleem, dan zijn de contracten verdacht -
+        # ook als hun naam nergens in de traceback staat. Zonder dit repareert
+        # de pipeline om de oorzaak heen en blijft die staan.
+        if any(sig in tekst for sig in CONTRACT_SIGNALEN):
+            contracten = {p for p in paden if self._is_contract(p)}
+            if contracten - opnieuw:
+                print("[developer] contractsignaal in de testoutput: "
+                      "contractbestanden gaan mee in de herschrijfset", flush=True)
+            opnieuw |= contracten
+
+        # Twee of meer eerdere failures in deze run: gericht repareren is gokwerk
+        # geworden. Alles opnieuw, contracten incluis.
+        if len(feedback.get("history") or []) >= 2:
+            print("[developer] derde poging zonder doorbraak: alles opnieuw schrijven",
+                  flush=True)
+            return set(paden)
 
         # Niets herkend? Dan is gericht repareren gokwerk - schrijf alles opnieuw.
         return opnieuw or set(paden)

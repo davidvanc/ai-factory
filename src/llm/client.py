@@ -16,6 +16,11 @@ MODEL_ROUTES = {
     "builder":   "~deepseek/deepseek-v4-flash-latest",
     "tester":    "~deepseek/deepseek-v4-flash-latest",
     "judge":     "~anthropic/claude-sonnet-latest",
+    # Controleert de contractbestanden tegen het plan voor de rest erop
+    # gebouwd wordt. Kleine input, klein antwoord, dus goedkoop.
+    "contract_review": "~anthropic/claude-sonnet-latest",
+    # Destilleert lessen uit de mislukte pogingen van een run.
+    "lesson_extractor": "~anthropic/claude-sonnet-latest",
     "consultant_scientific": "~google/gemini-pro-latest",
 }
 
@@ -40,6 +45,8 @@ TIMEOUTS = {
     "tester":    300,   # 5 min
     "consultant_scientific": 120, #  2 min
     "judge":     180,   # 3 min
+    "contract_review": 180,   # 3 min
+    "lesson_extractor": 180,   # 3 min
 }
 
 class LLMClient:
