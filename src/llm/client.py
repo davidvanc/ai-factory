@@ -11,10 +11,26 @@ load_dotenv()
 # (nieuwer en een derde goedkoper), deepseek vastgezet -> latest.
 MODEL_ROUTES = {
     "planner":   "~anthropic/claude-opus-latest",
+    # De developer werkt in twee fasen. De designer denkt het project een keer
+    # helemaal door en legt per bestand vast wat erin moet; de writer zet die
+    # specificatie om in code zonder zelf te redeneren.
+    #
+    # Gemeten 2026-08-23, waarom deze modellen:
+    #   ~deepseek/deepseek-v4-flash-latest  95% van de output is reasoning
+    #   google/gemini-3.7-flash             73%
+    #   deepseek/deepseek-v3.2               0%  <- schrijft alleen uit
+    #   anthropic/claude-haiku-4.5           0%
+    # Een schrijver die zelf redeneert maakt de opsplitsing zinloos: dan betaal
+    # je het denkwerk alsnog per bestand.
+    "designer":         "~anthropic/claude-opus-latest",
+    "designer_premium": "~anthropic/claude-opus-latest",
+    "writer":           "deepseek/deepseek-v3.2",
+    "writer_premium":   "anthropic/claude-haiku-4.5",
+    # Blijft staan zodat oude aanroepen met role="developer" niet omvallen.
     "developer": "~google/gemini-pro-latest",
     "developer_premium":  "~anthropic/claude-opus-latest",
-    "builder":   "~deepseek/deepseek-v4-flash-latest",
-    "tester":    "~deepseek/deepseek-v4-flash-latest",
+    "builder":   "deepseek/deepseek-v3.2",
+    "tester":    "deepseek/deepseek-v3.2",
     "judge":     "~anthropic/claude-sonnet-latest",
     # Controleert de contractbestanden tegen het plan voor de rest erop
     # gebouwd wordt. Kleine input, klein antwoord, dus goedkoop.
@@ -33,6 +49,12 @@ MODEL_ROUTES = {
 MAX_TOKENS = {
     "developer":          64000,
     "developer_premium":  64000,
+    # De designer levert de specificatie van het hele project in een antwoord.
+    "designer":           64000,
+    "designer_premium":   64000,
+    # De writer levert een bestand; meer dan dit betekent dat er iets misgaat.
+    "writer":             16000,
+    "writer_premium":     16000,
 }
 DEFAULT_MAX_TOKENS = 32000
 
@@ -40,6 +62,10 @@ DEFAULT_MAX_TOKENS = 32000
 TIMEOUTS = {
     "planner":   180,   # 3 min
     "developer": 600,   # 15 min - grote code outputs
+    "designer":         900,   # denkt het hele project door
+    "designer_premium": 900,
+    "writer":           300,
+    "writer_premium":   300,
     "builder":   300,   # 5 min
     "developer_premium":  900,   # Opus is trager, geef meer tijd
     "tester":    300,   # 5 min
@@ -160,9 +186,10 @@ class LLMClient:
         gebruikt = (usage_info or {}).get("completion_tokens")
         redeneer = det.get("reasoning_tokens")
         gecached = ((usage_info or {}).get("prompt_tokens_details") or {}).get("cached_tokens")
-        print(f"[{role}] finish_reason={finish_reason} completion_tokens={gebruikt} "
-              f"reasoning_tokens={redeneer} cached_prompt_tokens={gecached} "
-              f"content_chars={len(full_text)}", flush=True)
+        invoer = (usage_info or {}).get("prompt_tokens")
+        print(f"[{role}] finish_reason={finish_reason} prompt_tokens={invoer} "
+              f"completion_tokens={gebruikt} reasoning_tokens={redeneer} "
+              f"cached_prompt_tokens={gecached} content_chars={len(full_text)}", flush=True)
 
         # Half afgeleverde JSON is nooit bruikbaar. Zonder deze check komt dat
         # verderop naar boven als "kon geen JSON extraheren", wat de echte

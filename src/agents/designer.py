@@ -1,0 +1,264 @@
+"""
+Designer-agent: denkt het hele project een keer door en legt per bestand vast
+wat erin moet.
+
+Waarom deze stap bestaat. De developer schreef eerst per bestand met een sterk
+model. Elk bestand kreeg de volledige opdracht mee en begon opnieuw over het
+hele probleem na te denken - gemeten op een base64-service: 19 aanroepen, 89%
+van alle output-tokens ging naar redeneren, 35.606 tokens voor een bestand van
+3.256 tekens. Het denkwerk gebeurde negentien keer.
+
+Nu gebeurt het een keer. Deze agent levert per bestand een specificatie die
+concreet genoeg is om zonder nadenken uit te schrijven: welke functies, welke
+signatures, welk gedrag, welke fouten, welke imports. Het uitschrijven gaat
+daarna naar een goedkoop model dat niet redeneert.
+
+Bij een retry wordt hier opnieuw nagedacht, niet bij de schrijver: een
+niet-redenerend model kan een bug niet bedenken.
+"""
+import json
+from typing import Any, Dict, List, Optional
+
+from src.llm.client import LLMClient
+from src.llm.json_utils import extract_json
+
+
+# Bestanden die contracten vastleggen. Die gaan in de eerste golf, zodat de
+# rest hun definitieve specs al binnen heeft.
+CONTRACT_NAMEN = (
+    "constants.py", "types.py", "errors.py", "config.py", "models.py", "schemas.py",
+)
+
+# Bovengrens per ontwerpgolf. Gemeten ~3.300 output-tokens per bestand, dus acht
+# blijft ruim onder de 64.000 en ver onder de timeout van 15 minuten.
+MAX_PER_GOLF = 8
+
+
+class DesignerAgent:
+    def __init__(self):
+        self.llm = LLMClient()
+
+    def run(
+        self,
+        plan: Dict[str, Any],
+        paden: List[str],
+        feedback: Optional[Dict[str, Any]] = None,
+        role: str = "designer",
+    ) -> Dict[str, str]:
+        """Geeft {pad: specificatie} terug voor de gevraagde paden."""
+        specs: Dict[str, str] = {}
+        golven = self._golven(paden)
+        for i, golf in enumerate(golven, 1):
+            print(f"[designer] golf {i}/{len(golven)}: {len(golf)} bestand(en) "
+                  f"({', '.join(golf)})", flush=True)
+            specs.update(self._ontwerp(plan, golf, specs, feedback, role))
+
+        ontbreekt = [p for p in paden if p not in specs]
+        if ontbreekt:
+            print(f"[designer] geen spec gekregen voor {ontbreekt} - "
+                  f"die bestanden krijgen alleen het plan mee", flush=True)
+        return specs
+
+    def _golven(self, paden: List[str]) -> List[List[str]]:
+        """Contracten, dan de rest van src, dan de tests - en niets te groot.
+
+        De volgorde is dezelfde die de developer aanhoudt, zodat een latere golf
+        altijd de specs van waar hij op bouwt al binnen heeft.
+        """
+        contracten, bouw, tests = [], [], []
+        for pad in paden:
+            naam = pad.split("/")[-1]
+            is_test = ("/tests/" in pad or pad.startswith("tests/")
+                       or naam.startswith("test_") or naam == "conftest.py")
+            if naam in CONTRACT_NAMEN:
+                contracten.append(pad)
+            elif is_test:
+                tests.append(pad)
+            else:
+                bouw.append(pad)
+
+        golven = []
+        for groep in (contracten, bouw, tests):
+            # Bovengrens per golf: een project met dertig testbestanden mag de
+            # test-golf niet alsnog opblazen.
+            for i in range(0, len(groep), MAX_PER_GOLF):
+                stuk = groep[i:i + MAX_PER_GOLF]
+                if stuk:
+                    golven.append(stuk)
+        return golven
+
+    def _ontwerp(
+        self,
+        plan: Dict[str, Any],
+        golf: List[str],
+        eerdere_specs: Dict[str, str],
+        feedback: Optional[Dict[str, Any]],
+        role: str,
+    ) -> Dict[str, str]:
+        antwoord = self.llm.generate(
+            self._prompt(plan, golf, feedback, eerdere_specs),
+            role=role,
+            temperature=0.2,
+        )
+        data = extract_json(antwoord, expect="object")
+        if not data or not isinstance(data.get("bestanden"), list):
+            raise ValueError(
+                f"Designer: kon geen bruikbare JSON extraheren voor {golf} "
+                f"(lengte {len(antwoord)}). Eerste 200 chars: {antwoord[:200]}"
+            )
+
+        specs = {}
+        for item in data["bestanden"]:
+            pad = (item or {}).get("path")
+            spec = (item or {}).get("spec")
+            if pad and spec:
+                specs[pad] = spec if isinstance(spec, str) else json.dumps(
+                    spec, indent=2, ensure_ascii=False
+                )
+        return specs
+
+    def _prompt(
+        self,
+        plan: Dict[str, Any],
+        paden: List[str],
+        feedback: Optional[Dict[str, Any]],
+        eerdere_specs: Optional[Dict[str, str]] = None,
+    ) -> str:
+        feedback_blok = ""
+        if feedback:
+            geschiedenis = "\n".join(feedback.get("history") or [])
+            vorige = feedback.get("previous_files") or []
+            vorige_code = "\n\n".join(
+                f"--- {f['path']} ---\n{f.get('content','')}"
+                for f in vorige
+                if f.get("path") in set(paden)
+            )
+            feedback_blok = f"""
+=== DIT IS EEN HERSTELRONDE ===
+Er is al code geschreven en die faalt. Jouw taak is UITZOEKEN WAAROM en de
+specificatie zo bijstellen dat het deze keer wel klopt. De schrijver die jouw
+spec uitvoert denkt zelf niet na - alles wat er moet gebeuren moet dus in de
+spec staan.
+
+Wat er misging:
+{feedback.get('summary', '')}
+
+Issues:
+{json.dumps(feedback.get('issues', []), indent=2, ensure_ascii=False)}
+
+Testoutput (laatste 3000 tekens):
+{(feedback.get('test_output') or '')[:3000]}
+
+Eerdere pogingen in deze run:
+{geschiedenis}
+
+De huidige inhoud van de bestanden die je opnieuw moet specificeren:
+{vorige_code}
+
+Wees expliciet over wat er moet VERANDEREN en waarom. Noem de concrete
+functie, het concrete veld, de concrete regel.
+"""
+
+        eerder_blok = ""
+        if eerdere_specs:
+            samen = "\n\n".join(
+                f"--- {pad} ---\n{spec}" for pad, spec in eerdere_specs.items()
+            )
+            eerder_blok = f"""
+=== AL ONTWORPEN BESTANDEN ===
+Deze specs liggen vast. Sluit er exact op aan: gebruik de klassen, velden en
+functies die hier staan en verzin er niets bij. Elk veld dat je in een test
+assert MOET hierboven in het bijbehorende model staan.
+
+{samen}
+"""
+
+        return f"""Je ontwerpt een Python-microservice tot op bestandsniveau. Je schrijft ZELF
+geen code. Je levert per bestand een specificatie die zo concreet is dat een
+eenvoudig model het kan uitschrijven zonder iets te hoeven bedenken.
+
+Project: {plan['project_name']}
+Beschrijving: {plan['description']}
+Requirements: {json.dumps(plan['requirements'], indent=2)}
+Endpoints: {json.dumps(plan.get('endpoints', []), indent=2, ensure_ascii=False)}
+Tests die moeten slagen: {json.dumps(plan['tests'], indent=2, ensure_ascii=False)}
+{feedback_blok}
+{eerder_blok}
+{VASTE_KADERS}
+
+Specificeer deze bestanden, in deze volgorde:
+{json.dumps(paden, indent=2)}
+
+Voor elk bestand geef je een spec die minstens dit bevat, voor zover van toepassing:
+- waar het bestand voor dient, in een zin
+- welke imports erin komen (exacte modulepaden)
+- elke klasse: naam, basisklasse, en per veld de naam, het type en of het
+  verplicht is. Gebruik StrictStr/StrictInt waar een test een 422 verwacht bij
+  een verkeerd type - gewone str laat Pydantic stilzwijgend converteren.
+- elke functie: exacte signature met types, wat hij doet, wat hij teruggeeft,
+  en welke exception hij gooit bij welke situatie
+- voor endpoints: pad, methode, request-model, response-model, statuscodes
+- voor testbestanden: elke testfunctie bij naam, met wat hij aanroept en wat
+  hij precies assert. Noem de concrete waarden.
+
+Wees zo concreet dat twee verschillende schrijvers dezelfde code zouden
+opleveren. Vage zinnen als "valideer de invoer" zijn onbruikbaar - schrijf op
+WAT er gevalideerd wordt en WELKE fout eruit komt.
+
+TWEE HARDE GRENZEN:
+
+1. BLIJF BINNEN HET PLAN. Specificeer geen endpoints, velden, statistieken of
+   foutcodes die het plan niet vraagt. Geen tellers, geen extra metadata in
+   responses, geen eigen foutafhandeling voor dingen die het framework al doet
+   (verkeerd content-type, onparseerbare JSON, ontbrekende velden - FastAPI
+   geeft daar zelf een 422 op en die vorm neem je over, je verzint er geen
+   eigen error_code voor). Meer specificeren dan gevraagd levert code op die
+   niemand besteld heeft en tests die er alsnog op struikelen.
+
+2. WEES INTERN CONSISTENT. Elk veld dat een test assert MOET in het
+   responsemodel van dat endpoint staan, met hetzelfde type. En andersom: elk
+   veld in een responsemodel moet ergens vandaan komen. Loop je test-specs na
+   tegen je model-specs voor je antwoordt - een test die een veld verwacht dat
+   het model niet heeft, is een KeyError die je hier had kunnen zien.
+
+Antwoord met alleen JSON:
+{{"bestanden": [{{"path": "src/models.py", "spec": "..."}}]}}"""
+
+
+# Vaste kaders waar het ontwerp zich aan moet houden. Los gehouden van de
+# f-string omdat er voorbeeldcode met accolades in staat.
+VASTE_KADERS = """
+KADERS WAAR HET ONTWERP ZICH AAN MOET HOUDEN:
+
+- Het project gebruikt het standaard service_template (staat al in
+  src/service_template/). src/main.py bevat alleen:
+
+      from src.service_template.bootstrap import create_app
+      from src.routes import router as business_router
+
+      app = create_app(
+          title="<naam>",
+          version="0.1.0",
+          business_routers=[business_router],
+      )
+
+- Endpoints staan in src/routes.py als APIRouter. Nooit @app.get/@app.post in
+  main.py.
+- /health, /ready en /metrics komen automatisch uit het template. Niet zelf
+  specificeren.
+- Auth, CORS, rate limiting en security headers komen uit het template. Alleen
+  specificeren dat een endpoint auth nodig heeft, niet hoe auth werkt:
+      from src.service_template.auth import verify_bearer_token
+- Source in src/, tests in tests/. Imports altijd "from src.X import Y", ook in
+  tests. Nooit sys.path-trucs.
+- Tests zijn pytest-functies met assert. De fixtures 'client' en 'auth_headers'
+  komen uit tests/conftest.py.
+- Coverage-gate is 80% van src/, met src/main.py en src/service_template/
+  uitgesloten. Elke module met logica heeft dus tests nodig.
+- Heeft de service module-level state, specificeer dan een reset_state()
+  functie in die module, plus een autouse-fixture die hem aanroept - zowel in
+  tests/conftest.py als bovenaan elk testbestand. reset_state gebruikt
+  dict.clear() en 'global' voor tellers, geen rebind.
+- Geen hardcoded secrets. Configuratie via os.getenv().
+- Geen TODO's en geen placeholders in de spec.
+"""
