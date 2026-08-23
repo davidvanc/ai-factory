@@ -191,12 +191,12 @@ Premium model escalation happens on the final attempt.
 In `src/llm/client.py`:
 ```python
 MODEL\_ROUTES = {
-    "planner":               "anthropic/claude-opus-4-7",
+    "planner":               "~anthropic/claude-opus-latest",
     "developer":             "\~google/gemini-pro-latest",
-    "developer\_premium":     "anthropic/claude-opus-4-7",
-    "builder":               "deepseek/deepseek-v4-flash",
-    "tester":                "deepseek/deepseek-v4-flash",
-    "judge":                 "anthropic/claude-sonnet-4-6",
+    "developer\_premium":     "~anthropic/claude-opus-latest",
+    "builder":               "~deepseek/deepseek-v4-flash-latest",
+    "tester":                "~deepseek/deepseek-v4-flash-latest",
+    "judge":                 "~anthropic/claude-sonnet-latest",
     "consultant\_scientific": "\~google/gemini-pro-latest",
 }
 ```
@@ -207,7 +207,7 @@ Flash for Builder/Tester: They barely use the LLM — simple tasks
 Sonnet 4.6 for Judge: Good reasoning at lower cost than Opus
 Premium escalation: Last attempt uses Opus to break out of failure patterns
 Caching
-OpenRouter supports prompt caching for `anthropic/`, `google/` and `\~google/` models. Implemented in `client.py`:
+OpenRouter supports prompt caching for `anthropic/`, `google/`, `\~google/` and `\~anthropic/` models. Implemented in `client.py`:
 ```python
 if supports\_caching and len(prompt) > 1024:
     cache\_split = max(0, len(prompt) - 200)

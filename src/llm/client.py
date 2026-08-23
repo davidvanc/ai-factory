@@ -6,13 +6,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# De "~"-ids zijn OpenRouter-aliassen die automatisch naar de nieuwste versie
+# wijzen. Bijgewerkt 2026-08-23: opus-4.7 -> opus-5, sonnet-4.6 -> sonnet-5
+# (nieuwer en een derde goedkoper), deepseek vastgezet -> latest.
 MODEL_ROUTES = {
-    "planner":   "anthropic/claude-opus-4-7",
+    "planner":   "~anthropic/claude-opus-latest",
     "developer": "~google/gemini-pro-latest",
-    "developer_premium":  "anthropic/claude-opus-4-7",
-    "builder":   "deepseek/deepseek-v4-flash",
-    "tester":    "deepseek/deepseek-v4-flash",
-    "judge":     "anthropic/claude-sonnet-4-6",
+    "developer_premium":  "~anthropic/claude-opus-latest",
+    "builder":   "~deepseek/deepseek-v4-flash-latest",
+    "tester":    "~deepseek/deepseek-v4-flash-latest",
+    "judge":     "~anthropic/claude-sonnet-latest",
     "consultant_scientific": "~google/gemini-pro-latest",
 }
 
@@ -36,7 +39,7 @@ class LLMClient:
             raise ValueError("OPENROUTER_API_KEY niet gevonden in .env")
 
     def generate(self, prompt: str, role: str = "planner", temperature: float = 0.7, stream: bool = True) -> str:
-        model = MODEL_ROUTES.get(role, "anthropic/claude-sonnet-4-6")
+        model = MODEL_ROUTES.get(role, "~anthropic/claude-sonnet-latest")
         timeout = TIMEOUTS.get(role, 300)
 
         headers = {
@@ -48,6 +51,7 @@ class LLMClient:
         # Anthropic (Claude) en Google (Gemini) ondersteunen prompt caching via OpenRouter
         supports_caching = (
             model.startswith("anthropic/") or
+            model.startswith("~anthropic/") or
             model.startswith("google/") or
             model.startswith("~google/")
         )

@@ -100,12 +100,12 @@ Flow per job: Planner → Developer (met retry-feedback indien nodig) → Builde
 
 | Role | Model | Notes |
 |---|---|---|
-| planner | `anthropic/claude-opus-4-7` | |
+| planner | `~anthropic/claude-opus-latest` | |
 | developer | `~google/gemini-pro-latest` | |
-| developer_premium | `anthropic/claude-opus-4-7` | last attempt fallback |
-| builder | `deepseek/deepseek-v4-flash` | |
-| tester | `deepseek/deepseek-v4-flash` | |
-| judge | `anthropic/claude-sonnet-4-6` | |
+| developer_premium | `~anthropic/claude-opus-latest` | last attempt fallback |
+| builder | `~deepseek/deepseek-v4-flash-latest` | |
+| tester | `~deepseek/deepseek-v4-flash-latest` | |
+| judge | `~anthropic/claude-sonnet-latest` | |
 | consultant_scientific | `~google/gemini-pro-latest` | |
 
 Globale `max_tokens: 32000`. Per-role timeouts: planner 180s, developer 600s, premium 900s, builder/tester 300s, judge 180s.
