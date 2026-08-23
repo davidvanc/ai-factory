@@ -75,6 +75,14 @@ TIMEOUTS = {
     "lesson_extractor": 180,   # 3 min
 }
 
+class AntwoordAfgekapt(ValueError):
+    """Het model raakte zijn max_tokens op voor het klaar was.
+
+    Eigen type zodat aanroepers hierop kunnen terugvallen (bijvoorbeeld door de
+    opdracht op te knippen) in plaats van de foutmelding te moeten herkennen.
+    """
+
+
 class LLMClient:
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -195,7 +203,7 @@ class LLMClient:
         # verderop naar boven als "kon geen JSON extraheren", wat de echte
         # oorzaak verbergt.
         if finish_reason == "length":
-            raise ValueError(
+            raise AntwoordAfgekapt(
                 f"{role}: antwoord afgekapt op de max_tokens-grens "
                 f"({MAX_TOKENS.get(role, DEFAULT_MAX_TOKENS)}). Verbruikt: {gebruikt} tokens, "
                 f"waarvan {redeneer} aan reasoning. Verhoog MAX_TOKENS voor deze rol "

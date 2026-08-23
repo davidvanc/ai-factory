@@ -19,7 +19,9 @@ niet-redenerend model kan een bug niet bedenken.
 import json
 from typing import Any, Dict, List, Optional
 
-from src.llm.client import LLMClient
+import requests
+
+from src.llm.client import LLMClient, AntwoordAfgekapt
 from src.llm.json_utils import extract_json
 
 
@@ -32,6 +34,18 @@ CONTRACT_NAMEN = (
 # Bovengrens per ontwerpgolf. Gemeten ~3.300 output-tokens per bestand, dus acht
 # blijft ruim onder de 64.000 en ver onder de timeout van 15 minuten.
 MAX_PER_GOLF = 8
+
+# Redenen om alsnog op te knippen: het antwoord paste niet, duurde te lang, of
+# kwam er onbruikbaar uit. Alle drie betekenen "te veel in een keer gevraagd".
+TE_VEEL_GEVRAAGD = (
+    AntwoordAfgekapt,
+    TimeoutError,
+    requests.exceptions.Timeout,
+)
+
+# Eenmaal teruggevallen binnen een run, blijft het zo: een retry hoeft die dure
+# les niet opnieuw te leren. Per proces, en een proces is een project.
+_GOLVEN_NODIG = False
 
 
 class DesignerAgent:
@@ -46,6 +60,27 @@ class DesignerAgent:
         role: str = "designer",
     ) -> Dict[str, str]:
         """Geeft {pad: specificatie} terug voor de gevraagde paden."""
+        global _GOLVEN_NODIG
+
+        if not _GOLVEN_NODIG and len(paden) > 1:
+            # Eerst gewoon proberen. Dat is de goedkope weg en hij lukt voor
+            # verreweg de meeste projecten.
+            try:
+                specs = self._ontwerp(plan, paden, {}, feedback, role)
+                ontbreekt = [p for p in paden if p not in specs]
+                if not ontbreekt:
+                    return specs
+                print(f"[designer] geen spec voor {ontbreekt} in een ronde - "
+                      f"opnieuw in golven", flush=True)
+            except TE_VEEL_GEVRAAGD as e:
+                print(f"[designer] een ontwerpronde lukte niet ({type(e).__name__}), "
+                      f"opnieuw in golven", flush=True)
+            except ValueError as e:
+                # Onparseerbare JSON is meestal ook 'te veel gevraagd'.
+                print(f"[designer] antwoord onbruikbaar ({e}), opnieuw in golven",
+                      flush=True)
+            _GOLVEN_NODIG = True
+
         specs: Dict[str, str] = {}
         golven = self._golven(paden)
         for i, golf in enumerate(golven, 1):
@@ -207,13 +242,29 @@ WAT er gevalideerd wordt en WELKE fout eruit komt.
 
 TWEE HARDE GRENZEN:
 
-1. BLIJF BINNEN HET PLAN. Specificeer geen endpoints, velden, statistieken of
-   foutcodes die het plan niet vraagt. Geen tellers, geen extra metadata in
-   responses, geen eigen foutafhandeling voor dingen die het framework al doet
-   (verkeerd content-type, onparseerbare JSON, ontbrekende velden - FastAPI
-   geeft daar zelf een 422 op en die vorm neem je over, je verzint er geen
-   eigen error_code voor). Meer specificeren dan gevraagd levert code op die
-   niemand besteld heeft en tests die er alsnog op struikelen.
+1. BLIJF BINNEN HET PLAN. Leg elk element dat je specificeert langs deze
+   twee toetsen. Komt er een keer 'nee' uit, dan gaat het element eruit.
+
+   TOETS A - staat het in het plan? Wijs de regel in de beschrijving, de
+   endpoints of de tests aan die om dit element vraagt. Kun je die regel niet
+   aanwijzen, dan is het jouw idee en niet de opdracht. Nuttig, netjes of
+   gebruikelijk zijn geen redenen. Dit geldt voor endpoints, velden,
+   statuscodes, foutcodes, tellers en elk stukje metadata in een response.
+
+   TOETS B - maakt de service dit antwoord zelf? Wijs de functie in jouw eigen
+   specificatie aan die dit antwoord produceert. Kun je die niet aanwijzen, dan
+   komt het antwoord ergens anders vandaan - uit FastAPI, uit de middleware van
+   het service_template, uit de webserver - en dan ken jij de vorm ervan niet.
+   Specificeer die vorm dus niet en laat er geen test op asserten.
+
+   Toets B is de belangrijkste, want daar gaat het telkens mis. Alles op
+   transportniveau - content-type, JSON parsen, ontbrekende of verkeerd
+   getypeerde velden, de limiet op de request body, timeouts, auth - wordt
+   afgehandeld voor jouw code aan de beurt is. Dat een fout logisch bij jouw
+   service hoort, betekent niet dat jouw code hem produceert.
+
+   Wil een test toch controleren dat zo'n geval afgewezen wordt, assert dan
+   alleen de statuscode en niets over de body.
 
 2. WEES INTERN CONSISTENT. Elk veld dat een test assert MOET in het
    responsemodel van dat endpoint staan, met hetzelfde type. En andersom: elk
