@@ -1,0 +1,2 @@
+class RRuleError(Exception):
+    pass
