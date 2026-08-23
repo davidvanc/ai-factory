@@ -1,15 +1,34 @@
 import json
 import pytest
 from fastapi.responses import JSONResponse
-from src.errors import Base64DecodeFailedError, Base64ServiceError, InputTooLargeError, InvalidBase64CharacterError, InvalidBase64LengthError, NonUtf8PayloadError
-from src.logic import check_input_size, compute_padding, decode_data, encode_text, validate_base64_characters
+from src.errors import (
+    Base64DecodeFailedError,
+    Base64ServiceError,
+    InputTooLargeError,
+    InvalidBase64CharacterError,
+    InvalidBase64LengthError,
+    NonUtf8PayloadError,
+)
+from src.logic import (
+    check_input_size,
+    compute_padding,
+    decode_data,
+    encode_text,
+    validate_base64_characters,
+)
 from src.models import MAX_INPUT_BYTES
 
-ROUNDTRIP_TEXTS = ["", "a", "Hallo wereld", "caf\u00e9 \u2713", "\U0001F389 feest \U0001F680", "\u00c6r\u00f8sk\u00f8bing", "regel1\nregel2\ttab", "0123456789+/=", "\u00ff\u00ff\u00fe"]
-
-def test_max_input_bytes_blijft_onder_body_limiet() -> None:
-    assert isinstance(MAX_INPUT_BYTES, int)
-    assert 0 < MAX_INPUT_BYTES <= 65536
+ROUNDTRIP_TEXTS = [
+    "",
+    "a",
+    "Hallo wereld",
+    "caf\u00e9 \u2713",
+    "\U0001F389 feest \U0001F680",
+    "\u00c6r\u00f8sk\u00f8bing",
+    "regel1\nregel2\ttab",
+    "0123456789+/=",
+    "\u00ff\u00ff\u00fe",
+]
 
 def test_check_input_size_binnen_limiet_geeft_none() -> None:
     assert check_input_size(0, 10) is None

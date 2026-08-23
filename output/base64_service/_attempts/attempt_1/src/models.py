@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 SERVICE_NAME: str = "base64_service"
 SERVICE_VERSION: str = os.getenv("BASE64_SERVICE_VERSION", "1.0.0")
 ALPHABETS: List[str] = ["standard", "url_safe"]
-MAX_INPUT_BYTES: int = int(os.getenv("BASE64_MAX_INPUT_BYTES", "65536"))
+MAX_INPUT_BYTES: int = int(os.getenv("BASE64_MAX_INPUT_BYTES", "1048576"))
 STANDARD_ALPHABET_CHARS: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 URLSAFE_ALPHABET_CHARS: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 

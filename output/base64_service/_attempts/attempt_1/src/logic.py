@@ -2,14 +2,19 @@ from __future__ import annotations
 import base64
 import binascii
 from typing import Tuple
-from src.errors import Base64DecodeFailedError, InputTooLargeError, InvalidBase64CharacterError, InvalidBase64LengthError, NonUtf8PayloadError
+from src.errors import (
+    Base64DecodeFailedError,
+    InputTooLargeError,
+    InvalidBase64CharacterError,
+    InvalidBase64LengthError,
+    NonUtf8PayloadError,
+)
 from src.models import MAX_INPUT_BYTES, STANDARD_ALPHABET_CHARS, URLSAFE_ALPHABET_CHARS
 
 
 def check_input_size(size: int, limit: int = MAX_INPUT_BYTES) -> None:
     if size > limit:
         raise InputTooLargeError(size, limit)
-    return None
 
 
 def validate_base64_characters(data: str, url_safe: bool) -> None:
@@ -18,7 +23,6 @@ def validate_base64_characters(data: str, url_safe: bool) -> None:
     for index, character in enumerate(data):
         if character not in allowed:
             raise InvalidBase64CharacterError(character, index, url_safe)
-    return None
 
 
 def compute_padding(data: str) -> int:
@@ -44,7 +48,7 @@ def encode_text(text: str, url_safe: bool = False, strip_padding: bool = False, 
 
 
 def decode_data(data: str, url_safe: bool = False, limit: int = MAX_INPUT_BYTES) -> Tuple[str, int]:
-    check_input_size(len(data), limit)
+    check_input_size(len(data.encode("utf-8")), limit)
     validate_base64_characters(data, url_safe)
     padding_added = compute_padding(data)
     padded = data + "=" * padding_added
@@ -63,4 +67,10 @@ def decode_data(data: str, url_safe: bool = False, limit: int = MAX_INPUT_BYTES)
     return decoded, padding_added
 
 
-__all__ = ["check_input_size", "validate_base64_characters", "compute_padding", "encode_text", "decode_data"]
+__all__ = [
+    "check_input_size",
+    "validate_base64_characters",
+    "compute_padding",
+    "encode_text",
+    "decode_data",
+]

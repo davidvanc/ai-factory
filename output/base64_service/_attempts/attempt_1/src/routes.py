@@ -3,9 +3,16 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from src.errors import Base64ServiceError
 from src.logic import decode_data, encode_text
-from src.models import DecodeRequest, DecodeResponse, EncodeRequest, EncodeResponse, StatusResponse
+from src.models import (
+    DecodeRequest,
+    DecodeResponse,
+    EncodeRequest,
+    EncodeResponse,
+    StatusResponse,
+)
 
 router = APIRouter(tags=["base64"])
+
 
 @router.post("/encode", response_model=EncodeResponse, status_code=200, summary="Encodeer tekst naar base64")
 def encode_endpoint(payload: EncodeRequest) -> EncodeResponse | JSONResponse:
@@ -18,8 +25,9 @@ def encode_endpoint(payload: EncodeRequest) -> EncodeResponse | JSONResponse:
         input_length=len(payload.text),
         output_length=len(encoded),
         url_safe=payload.url_safe,
-        padding_stripped=padding_stripped
+        padding_stripped=padding_stripped,
     )
+
 
 @router.post("/decode", response_model=DecodeResponse, status_code=200, summary="Decodeer base64 naar tekst")
 def decode_endpoint(payload: DecodeRequest) -> DecodeResponse | JSONResponse:
@@ -32,11 +40,13 @@ def decode_endpoint(payload: DecodeRequest) -> DecodeResponse | JSONResponse:
         input_length=len(payload.data),
         output_length=len(decoded),
         url_safe=payload.url_safe,
-        padding_added=padding_added
+        padding_added=padding_added,
     )
+
 
 @router.get("/status", response_model=StatusResponse, status_code=200, summary="Healthcheck en servicemetadata")
 def status_endpoint() -> StatusResponse:
     return StatusResponse()
+
 
 __all__ = ["router"]

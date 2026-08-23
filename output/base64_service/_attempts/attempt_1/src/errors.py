@@ -35,11 +35,10 @@ class InvalidBase64CharacterError(Base64ServiceError):
         self.character = character
         self.position = position
         self.url_safe = url_safe
-        allowed = (
-            "A-Z, a-z, 0-9, '-', '_' en '=' als padding"
-            if url_safe
-            else "A-Z, a-z, 0-9, '+', '/' en '=' als padding"
-        )
+        if url_safe:
+            allowed = "A-Z, a-z, 0-9, '-', '_' en '=' als padding"
+        else:
+            allowed = "A-Z, a-z, 0-9, '+', '/' en '=' als padding"
         super().__init__(
             error="invalid_base64_character",
             message=f"ongeldige base64: teken '{character}' op positie {position} is niet toegestaan.",
@@ -54,7 +53,11 @@ class InvalidBase64LengthError(Base64ServiceError):
         super().__init__(
             error="invalid_base64_length",
             message=f"ongeldige base64: lengte {length} kan niet gedecodeerd worden.",
-            detail=f"Een base64-string moet, na het automatisch aanvullen van '=' padding, een lengte hebben die deelbaar is door 4. Bij lengte {length} blijft er 1 teken over ({length} % 4 == 1) en dat is nooit geldige base64. Verwijder of vul een teken aan.",
+            detail=(
+                f"Een base64-string moet, na het automatisch aanvullen van '=' padding, een lengte hebben die "
+                f"deelbaar is door 4. Bij lengte {length} blijft er 1 teken over ({length} % 4 == 1) en dat is "
+                "nooit geldige base64. Verwijder of vul een teken aan."
+            ),
             status_code=422,
         )
 
