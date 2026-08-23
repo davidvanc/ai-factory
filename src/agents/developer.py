@@ -1,13 +1,41 @@
+"""
+Developer-agent: schrijft de code voor een gepland project.
+
+Genereert **per bestand** in plaats van het hele project als een JSON-blob.
+Waarom: die blob liep tegen de max_tokens-grens aan zodra een project iets
+groter werd. Reasoning-modellen verstoken daar het leeuwendeel van (gemeten:
+78% bij Gemini 3.1 Pro), waarna het antwoord midden in de JSON afbrak en alles
+verloren was terwijl je de volle prijs betaalde. Per bestand is elk antwoord
+klein genoeg om nooit af te kappen, mislukt er een dan raak je alleen dat ene
+bestand kwijt, en bij een retry herschrijf je enkel de bestanden die de fout
+veroorzaakten in plaats van het hele project.
+
+Consistentie tussen bestanden komt van de volgorde: de contracten (models,
+config, errors) worden eerst geschreven en gaan daarna letterlijk mee als
+context, zodat latere bestanden niet kunnen fantaseren over wat er bestaat.
+
+De vaste instructies staan vooraan in de prompt en zijn bij elke aanroep
+byte-identiek, zodat prompt caching ze na het eerste bestand bijna gratis maakt.
+"""
 import json
 from typing import Optional, Dict, Any, List
 
 from src.llm.client import LLMClient
-from src.llm.json_utils import extract_json
+
+# Bestanden die contracten vastleggen waar de rest zich aan moet houden.
+# Die gaan eerst, zodat latere bestanden ze letterlijk in hun context krijgen.
+CONTRACT_BESTANDEN = (
+    "constants.py", "types.py", "errors.py", "config.py", "models.py", "schemas.py",
+)
 
 
 class DeveloperAgent:
     def __init__(self):
         self.llm = LLMClient()
+
+    # =========================
+    # PUBLIEKE API (ongewijzigd contract met de pipeline)
+    # =========================
 
     def run(
         self,
@@ -15,25 +43,191 @@ class DeveloperAgent:
         feedback: Optional[Dict[str, Any]] = None,
         role_override: str = "developer",
     ) -> Dict[str, Any]:
-        feedback_section = self._build_feedback_section(feedback) if feedback else ""
-        prompt = self._build_full_prompt(plan, feedback_section)
+        paden = self._bestandsvolgorde(plan)
+        if not paden:
+            raise ValueError("Developer: het plan bevat geen 'structure' met bestandspaden")
 
-        response = self.llm.generate(prompt, role=role_override, temperature=0.2)
+        vorige = {
+            f["path"]: f.get("content", "")
+            for f in (feedback or {}).get("previous_files", [])
+            if f.get("path")
+        }
+        opnieuw = self._te_herschrijven(paden, vorige, feedback)
 
-        result = extract_json(response, expect="object")
-        if result is None:
-            raise ValueError(
-                f"Developer: kon geen JSON extraheren uit response "
-                f"(lengte {len(response)}). Eerste 200 chars: {response[:200]}"
+        vaste_kop = self._vaste_kop(plan, feedback)
+        geschreven: List[Dict[str, str]] = []
+
+        hergebruikt = [p for p in paden if p not in opnieuw and p in vorige]
+        if hergebruikt:
+            print(
+                f"[developer] {len(hergebruikt)} bestand(en) ongewijzigd overgenomen, "
+                f"{len(opnieuw)} opnieuw te schrijven",
+                flush=True,
             )
-        return result
+
+        for i, pad in enumerate(paden, 1):
+            if pad not in opnieuw and pad in vorige:
+                geschreven.append({"path": pad, "content": vorige[pad]})
+                continue
+
+            print(f"[developer] bestand {i}/{len(paden)}: {pad}", flush=True)
+            staart = self._staart(pad, geschreven, vorige.get(pad))
+            inhoud = self.llm.generate(
+                vaste_kop + staart,
+                role=role_override,
+                temperature=0.2,
+                cache_prefix_len=len(vaste_kop),
+            )
+            inhoud = self._strip_fences(inhoud)
+            if not inhoud.strip() and not pad.endswith("__init__.py"):
+                raise ValueError(f"Developer: leeg antwoord voor {pad}")
+            geschreven.append({"path": pad, "content": inhoud})
+
+        return {"files": geschreven}
+
+    # =========================
+    # WELKE BESTANDEN, IN WELKE VOLGORDE
+    # =========================
+
+    def _bestandsvolgorde(self, plan: Dict[str, Any]) -> List[str]:
+        """Contracten eerst, dan logica, dan routes/main, dan tests."""
+        paden = [p for p in (plan.get("structure") or []) if isinstance(p, str) and p.strip()]
+
+        def sleutel(pad: str):
+            naam = pad.split("/")[-1]
+            is_test = "/tests/" in pad or pad.startswith("tests/") or naam.startswith("test_")
+            if naam == "__init__.py":
+                return (0, 0, pad)
+            if naam in CONTRACT_BESTANDEN:
+                return (1, CONTRACT_BESTANDEN.index(naam), pad)
+            if naam == "conftest.py":
+                return (5, 0, pad)
+            if is_test:
+                return (6, 0, pad)
+            if naam == "main.py":
+                return (4, 0, pad)
+            if naam == "routes.py":
+                return (3, 0, pad)
+            return (2, 0, pad)
+
+        return sorted(paden, key=sleutel)
+
+    def _te_herschrijven(
+        self,
+        paden: List[str],
+        vorige: Dict[str, str],
+        feedback: Optional[Dict[str, Any]],
+    ) -> set:
+        """Bij een eerste poging alles; bij een retry alleen wat de fout raakt."""
+        if not feedback or not vorige:
+            return set(paden)
+
+        genoemd = feedback.get("implicated_paths")
+        if genoemd:
+            opnieuw = {p for p in paden if p in set(genoemd)}
+        else:
+            # Vangnet als de pipeline geen lijst meegeeft: zoek bestandsnamen in de tekst.
+            tekst = " ".join([
+                str(feedback.get("summary", "")),
+                json.dumps(feedback.get("issues", []), ensure_ascii=False),
+                str(feedback.get("test_output", "") or ""),
+            ]).lower()
+            opnieuw = {
+                p for p in paden
+                if p.split("/")[-1].lower() in tekst or p.lower() in tekst
+            }
+
+        # Bestanden die nog niet bestaan moeten sowieso geschreven worden.
+        opnieuw |= {p for p in paden if p not in vorige}
+
+        # Niets herkend? Dan is gericht repareren gokwerk - schrijf alles opnieuw.
+        return opnieuw or set(paden)
+
+    # =========================
+    # PROMPT
+    # =========================
+
+    def _vaste_kop(self, plan: Dict[str, Any], feedback: Optional[Dict[str, Any]]) -> str:
+        """Het deel dat bij elk bestand identiek is, zodat caching het bijna gratis maakt."""
+        feedback_section = self._build_feedback_section(feedback) if feedback else ""
+        return (
+            "Je bent een expert Python developer. Je schrijft de code voor dit project,\n"
+            "bestand per bestand. Per aanroep lever je exact een bestand.\n\n"
+            f"Project: {plan['project_name']}\n"
+            f"Beschrijving: {plan['description']}\n"
+            f"Bestanden in dit project: {json.dumps(plan['structure'], indent=2)}\n"
+            f"Requirements: {json.dumps(plan['requirements'], indent=2)}\n"
+            f"Tests die moeten slagen: {json.dumps(plan['tests'], indent=2, ensure_ascii=False)}\n"
+            f"Endpoints om te implementeren: "
+            f"{json.dumps(plan.get('endpoints', []), indent=2, ensure_ascii=False)}\n"
+            f"{feedback_section}\n"
+            f"{REGELS}"
+        )
+
+    def _staart(
+        self,
+        pad: str,
+        geschreven: List[Dict[str, str]],
+        vorige_versie: Optional[str],
+    ) -> str:
+        """Het wisselende deel: context van al geschreven bestanden plus de opdracht."""
+        delen = []
+
+        if geschreven:
+            delen.append("\n=== AL GESCHREVEN BESTANDEN IN DIT PROJECT ===\n")
+            delen.append(
+                "Blijf hier exact mee consistent: importeer wat hier bestaat, verzin geen\n"
+                "functies, klassen of velden die er niet in staan. Herhaal ze NIET.\n\n"
+            )
+            for f in geschreven:
+                delen.append(f"--- {f['path']} ---\n{f['content']}\n\n")
+
+        if vorige_versie:
+            delen.append(f"\n=== JE VORIGE VERSIE VAN {pad} ===\n")
+            delen.append(
+                "Neem dit als basis en pas alleen aan wat nodig is om de gerapporteerde\n"
+                "problemen op te lossen.\n\n"
+            )
+            delen.append(vorige_versie + "\n\n")
+
+        delen.append(
+            "\n=== JOUW OPDRACHT ===\n"
+            f"Schrijf nu exact een bestand: {pad}\n\n"
+            f"Antwoord met ALLEEN de volledige inhoud van {pad}. Geen uitleg vooraf of\n"
+            "achteraf, geen markdown code fences, geen bestandsnaam als kop, geen JSON.\n"
+            "Begin direct met de eerste regel van het bestand.\n"
+        )
+        return "".join(delen)
+
+    # =========================
+    # ANTWOORD OPSCHONEN
+    # =========================
+
+    @staticmethod
+    def _strip_fences(tekst: str) -> str:
+        """Haalt een markdown-fence weg die het hele antwoord omsluit.
+
+        Alleen als het antwoord als geheel omwikkeld is - een README mag zelf
+        gewoon code fences bevatten en die moeten blijven staan.
+        """
+        regels = tekst.strip().split("\n")
+        while regels and not regels[0].strip():
+            regels.pop(0)
+        while regels and not regels[-1].strip():
+            regels.pop()
+        if (
+            len(regels) >= 2
+            and regels[0].lstrip().startswith("```")
+            and regels[-1].strip() == "```"
+        ):
+            regels = regels[1:-1]
+        return "\n".join(regels).rstrip() + "\n"
 
     # =========================
     # FEEDBACK BUILDING
     # =========================
 
     def _build_feedback_section(self, feedback: Dict[str, Any]) -> str:
-        previous_code = self._format_previous_code(feedback.get("previous_files"))
         history_block = self._format_history(feedback.get("history"))
         preservation_block = self._build_preservation_block(feedback)
 
@@ -41,95 +235,61 @@ class DeveloperAgent:
         issues = json.dumps(feedback.get("issues", []), indent=2, ensure_ascii=False)
         test_output = (feedback.get("test_output") or "")[:3000]
 
-        return f"""
-{history_block}
-{preservation_block}
-
-=== GERAPPORTEERDE PROBLEMEN ===
-Samenvatting: {summary}
-
-Specifieke issues:
-{issues}
-
-Test output (laatste 3000 chars):
-{test_output}
-{previous_code}
-
-🔄 NU: gebruik je vorige code als basis. Kopieer alle ongewijzigde files identiek over.
-   Pas alleen de specifieke regels aan die de gerapporteerde failures veroorzaakten.
-"""
-
-    def _format_previous_code(self, files: Optional[List[Dict[str, str]]]) -> str:
-        if not files:
-            return ""
-        parts = [
-            "\n\n=== JE VORIGE CODE (kopieer letterlijk over wat je niet hoeft te wijzigen) ===\n"
-        ]
-        for f in files:
-            parts.append(f"\n--- {f['path']} ---\n{f['content']}\n")
-        return "".join(parts)
+        return (
+            f"\n{history_block}\n{preservation_block}\n\n"
+            "=== GERAPPORTEERDE PROBLEMEN ===\n"
+            f"Samenvatting: {summary}\n\n"
+            f"Specifieke issues:\n{issues}\n\n"
+            f"Test output (laatste 3000 chars):\n{test_output}\n"
+        )
 
     def _format_history(self, history: Optional[List[str]]) -> str:
         if not history:
             return ""
         history_lines = "\n".join(history)
-        return f"""
-📜 GESCHIEDENIS VAN ALLE EERDERE FAILURES IN DEZE RUN:
-
-{history_lines}
-
-⚠️ KRITISCH: je moet ALLE bovenstaande issues TEGELIJKERTIJD oplossen.
-   - Een nieuwe tester-fail na een judge-rejection betekent meestal dat je een
-     hack hebt weggehaald zonder de echte bug te fixen.
-   - Een nieuwe judge-rejection na een tester-pass betekent meestal dat je een
-     hack hebt geïntroduceerd om de tester te laten slagen.
-Doel: code die ZOWEL alle tests laat slagen ALS de Judge laat APPROVEN, zonder
-hardcoded shortcuts. Als je beide niet tegelijk kunt: kies eerlijke tester-fails
-boven hacks.
-"""
+        return (
+            "\nGESCHIEDENIS VAN ALLE EERDERE FAILURES IN DEZE RUN:\n\n"
+            f"{history_lines}\n\n"
+            "KRITISCH: je moet ALLE bovenstaande issues TEGELIJKERTIJD oplossen.\n"
+            "   - Een nieuwe tester-fail na een judge-rejection betekent meestal dat je een\n"
+            "     hack hebt weggehaald zonder de echte bug te fixen.\n"
+            "   - Een nieuwe judge-rejection na een tester-pass betekent meestal dat je een\n"
+            "     hack hebt geintroduceerd om de tester te laten slagen.\n"
+            "Doel: code die ZOWEL alle tests laat slagen ALS de Judge laat APPROVEN, zonder\n"
+            "hardcoded shortcuts. Als je beide niet tegelijk kunt: kies eerlijke tester-fails\n"
+            "boven hacks.\n"
+        )
 
     def _build_preservation_block(self, feedback: Dict[str, Any]) -> str:
         summary = feedback.get("summary", "") or ""
         is_judge_rejection = "Tests failed" not in summary
 
-        block = """
-🚨 RETRY MODE — LEES DIT EERST EN ZORGVULDIG 🚨
-
-Dit is GEEN nieuwe taak. Je hebt eerder al een (deels) werkende versie geschreven. Je taak NU is
-NIET die versie opnieuw schrijven, maar ALLEEN de specifieke gerapporteerde problemen oplossen.
-
-ABSOLUTE REGELS (overtreden = falen):
-1. Files die NIET in de feedback genoemd worden: kopieer ze BIT-VOOR-BIT identiek over uit je vorige code.
-   Geen renames, geen formatting changes, geen "verbeteringen" — letterlijk dezelfde bytes.
-2. Files die WÉL problemen hebben: wijzig alleen de specifieke regels of functies die nodig zijn
-   om de gerapporteerde failures op te lossen. Laat al het andere ongemoeid.
-3. Tests die eerder slaagden, MOETEN nu ook slagen. Als jouw nieuwe versie ook maar één
-   eerder-slagende test breekt, heb je gefaald — ongeacht of de gemelde issues opgelost zijn.
-4. Voeg GEEN nieuwe features, endpoints of tests toe die niet in het plan staan.
-5. Bij twijfel "fix versus herschrijf": kies altijd fixen.
-"""
-
+        block = (
+            "\nRETRY MODE - LEES DIT EERST EN ZORGVULDIG\n\n"
+            "Dit is GEEN nieuwe taak. Je hebt eerder al een (deels) werkende versie\n"
+            "geschreven. Je taak NU is NIET die versie opnieuw schrijven, maar ALLEEN de\n"
+            "specifieke gerapporteerde problemen oplossen.\n\n"
+            "ABSOLUTE REGELS (overtreden = falen):\n"
+            "1. Wijzig alleen de specifieke regels of functies die nodig zijn om de\n"
+            "   gerapporteerde failures op te lossen. Laat al het andere ongemoeid.\n"
+            "2. Tests die eerder slaagden, MOETEN nu ook slagen. Als jouw nieuwe versie ook\n"
+            "   maar een enkele eerder-slagende test breekt, heb je gefaald - ongeacht of de\n"
+            "   gemelde issues opgelost zijn.\n"
+            "3. Voeg GEEN nieuwe features, endpoints of tests toe die niet in het plan staan.\n"
+            "4. Bij twijfel fix versus herschrijf: kies altijd fixen.\n"
+        )
         if is_judge_rejection:
-            block += """
-⚠️ EXTRA: in je vorige poging slaagden ALLE tests. De Judge heeft alleen kwaliteits-issues gemarkeerd.
-   Los die op ZONDER ook maar één test te breken. Test-compatibiliteit is hard requirement, niet optioneel.
-"""
+            block += (
+                "\nEXTRA: in je vorige poging slaagden ALLE tests. De Judge heeft alleen\n"
+                "kwaliteits-issues gemarkeerd. Los die op ZONDER ook maar een test te breken.\n"
+                "Test-compatibiliteit is hard requirement, niet optioneel.\n"
+            )
         return block
 
-    # =========================
-    # MAIN PROMPT
-    # =========================
 
-    def _build_full_prompt(self, plan: Dict[str, Any], feedback_section: str) -> str:
-        return f"""Je bent een expert Python developer. Schrijf alle code voor dit project:
-
-Project: {plan['project_name']}
-Beschrijving: {plan['description']}
-Bestanden: {json.dumps(plan['structure'], indent=2)}
-Requirements: {json.dumps(plan['requirements'], indent=2)}
-Tests die moeten slagen: {json.dumps(plan['tests'], indent=2)}
-Endpoints om te implementeren: {json.dumps(plan.get('endpoints', []), indent=2, ensure_ascii=False)}
-{feedback_section}
+# De vaste huisregels. Bewust een gewone string en geen f-string: hier staat
+# voorbeeldcode met accolades in, die anders geescaped zou moeten worden.
+REGELS = """
 KRITISCHE REGELS - LEES ZORGVULDIG:
 
 0. MICROSERVICE ARCHITECTUUR (kritisch):
@@ -185,7 +345,7 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
      2. Integration tests: test endpoints via 'client' fixture
      3. Edge cases: lege input, ongeldige format, grenswaarden
    - GEEN dummy tests die alleen "assert True" doen
-   - Test ELKE error path: ongeldige input → 422, niet gevonden → 404, etc.
+   - Test ELKE error path: ongeldige input -> 422, niet gevonden -> 404, etc.
    - Voorbeeld goede test:
      def test_convert_returns_correct_rgb(client):
          r = client.post("/convert", json=dict(hex="#FF0000"))
@@ -195,15 +355,16 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
      def test_convert_rejects_invalid_hex(client):
          r = client.post("/convert", json=dict(hex="ZZZ"))
          assert r.status_code == 422
+
 0d. TEST ISOLATION (kritisch - voorkomt flaky tests in CI):
    - Heeft je service module-level state (counters, dicts, lists in storage.py of vergelijkbaar)?
      Dan MOET je de reset-fixture op TWEE plaatsen zetten. Empirisch is gebleken dat in deze
-     build/test-omgeving de conftest.py autouse fixture niet altijd betrouwbaar firet —
+     build/test-omgeving de conftest.py autouse fixture niet altijd betrouwbaar firet -
      dezelfde fixture in het test-bestand zelf firet wel. Belt-and-suspenders is de stabiele oplossing.
    - Stappen die je verplicht moet zetten:
      1. Exporteer een reset functie uit de module met state:
         # src/database.py (of src/storage.py)
-        _items: dict = {{}}
+        _items: dict = {}
         _counter: int = 0
 
         def reset_state() -> None:
@@ -219,9 +380,9 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
         def _reset_state_between_tests():
             reset_state()
             yield
-     3. EN voeg dezelfde fixture óók toe bovenaan elk test-bestand
+     3. EN voeg dezelfde fixture ook toe bovenaan elk test-bestand
         (test_routes.py, test_logic.py, etc.) als backstop:
-        # tests/test_routes.py (vóór de eerste test)
+        # tests/test_routes.py (voor de eerste test)
         import pytest
         from src.database import reset_state
 
@@ -230,9 +391,8 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
             reset_state()
             yield
    - reset_state() zelf: gebruik dict.clear() voor in-place mutatie
-     (NIET _dict = {{}} rebind), en `global ...` voor counters.
+     (NIET _dict = {} rebind), en `global ...` voor counters.
    - Stateloze services (pure computatie) hebben deze regel niet nodig.
-
 
 1. MAPPENSTRUCTUUR (vast, niet onderhandelbaar):
    - Source code in src/
@@ -262,7 +422,7 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Geen comments zoals "voor simpliciteit doe ik X niet" als de tests Y verwachten
 
 6. CLI ARGUMENTEN:
-   - Als een argument `--no-foo` heet in de plan-beschrijving, gebruik EXACT die naam
+   - Als een argument --no-foo heet in de plan-beschrijving, gebruik EXACT die naam
    - Geen short flags (-x) als alternatief tenzij expliciet gevraagd
    - Argument-namen moeten matchen met wat een gebruiker zou verwachten
 
@@ -271,22 +431,10 @@ KRITISCHE REGELS - LEES ZORGVULDIG:
    - Vermijd API's die een API key vereisen (tenzij expliciet vermeld in de plan/context)
    - Als het plan een specifieke API noemt zoals "Open-Meteo" - gebruik die
    - Voor overheidssites of wetenschappelijke bronnen: scrape de HTML met BeautifulSoup
-   - Voorbeeld goed: kmi.be HTML parsen met BeautifulSoup voor weergegevens
-   - Voorbeeld fout: aqicn.org API gebruiken (vereist key)
    - Voor coordinaat-lookup: gebruik geopy met Nominatim (gratis, geen key)
 
 8. ENTRY POINT:
    - src/main.py is de hoofdfile
    - Voor CLI: gebruik argparse, exit cleanly bij missing args
    - Voor web: definieer 'app' (FastAPI) of vergelijkbaar
-
-KRITISCH: Je antwoord moet ENKEL geldig JSON zijn. Geen uitleg vooraf, geen samenvatting achteraf, geen markdown code fences. Direct beginnen met {{ en eindigen met }}.
-
-Antwoord ALLEEN met dit JSON formaat - GEEN andere tekst:
-{{
-  "files": [
-    {{"path": "src/main.py", "content": "volledige code hier"}},
-    {{"path": "src/module.py", "content": "..."}},
-    {{"path": "tests/test_module.py", "content": "..."}}
-  ]
-}}"""
+"""

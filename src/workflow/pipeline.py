@@ -203,7 +203,12 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
                 prev_dev.get("files", []),
                 matching_text,
             )
-            fb["previous_files"] = full_files
+            # De developer schrijft per bestand en kopieert ongewijzigde bestanden
+            # letterlijk over, dus hij heeft ze allemaal nodig - niet de slice.
+            # De slice bepaalt nu alleen nog WELKE bestanden opnieuw geschreven
+            # moeten worden; de rest kost geen enkele token meer.
+            fb["previous_files"] = prev_dev.get("files", [])
+            fb["implicated_paths"] = [f["path"] for f in full_files if f.get("path")]
             if manifest:
                 fb["other_files_manifest"] = manifest
         return fb

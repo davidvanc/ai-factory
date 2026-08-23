@@ -19,6 +19,18 @@ MODEL_ROUTES = {
     "consultant_scientific": "~google/gemini-pro-latest",
 }
 
+# max_tokens per rol. Let op: reasoning-modellen rekenen hun interne
+# redeneertokens hierin mee. De developer levert de grootste output en liep
+# op 32000 stelselmatig vast: Gemini 3.1 Pro verbruikte daar 24824 tokens
+# (78%) aan reasoning en werd afgekapt midden in de JSON, wat verderop opdook
+# als een onbegrijpelijke "kon geen JSON extraheren". 64000 is wat alle
+# gebruikte modellen aankunnen - Gemini 3.1 Pro stopt bij 65536.
+MAX_TOKENS = {
+    "developer":          64000,
+    "developer_premium":  64000,
+}
+DEFAULT_MAX_TOKENS = 32000
+
 # Timeout per rol in seconden
 TIMEOUTS = {
     "planner":   180,   # 3 min
@@ -38,7 +50,9 @@ class LLMClient:
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY niet gevonden in .env")
 
-    def generate(self, prompt: str, role: str = "planner", temperature: float = 0.7, stream: bool = True) -> str:
+    def generate(self, prompt: str, role: str = "planner",
+                 temperature: float = 0.7, stream: bool = True,
+                 cache_prefix_len: int = None) -> str:
         model = MODEL_ROUTES.get(role, "~anthropic/claude-sonnet-latest")
         timeout = TIMEOUTS.get(role, 300)
 
@@ -56,9 +70,16 @@ class LLMClient:
             model.startswith("~google/")
         )
 
-        if supports_caching and len(prompt) > 1024:
-            # Cache het grootste deel van de prompt; alleen laatste 200 chars vers
+        # cache_prefix_len: de aanroeper weet waar het herbruikbare deel eindigt.
+        # Dat is essentieel bij per-bestand generatie: alleen een prefix die bij
+        # elke aanroep byte-identiek is levert een cache-hit op. Zonder opgave
+        # valt hij terug op het oude gedrag (alles behalve de laatste 200 chars).
+        if cache_prefix_len is not None:
+            cache_split = max(0, min(cache_prefix_len, len(prompt)))
+        else:
             cache_split = max(0, len(prompt) - 200)
+
+        if supports_caching and cache_split > 1024:
             messages = [{
                 "role": "user",
                 "content": [
@@ -80,7 +101,7 @@ class LLMClient:
             "model": model,
             "temperature": temperature,
             "stream": stream,
-            "max_tokens": 32000,
+            "max_tokens": MAX_TOKENS.get(role, DEFAULT_MAX_TOKENS),
             "messages": messages
         }
         if not stream:
@@ -91,6 +112,8 @@ class LLMClient:
         # Streaming mode: live tonen wat binnenkomt
         print(f"[{role} via {model}] streaming...", flush=True)
         full_text = ""
+        finish_reason = None
+        usage_info = None
         last_chunk_time = time.time()
         idle_timeout = 90  # max 90s zonder nieuwe data
 
@@ -114,11 +137,34 @@ class LLMClient:
                     break
                 try:
                     chunk = json.loads(data)
-                    delta = chunk["choices"][0]["delta"].get("content", "")
+                    if chunk.get("usage"):
+                        usage_info = chunk["usage"]
+                    choice = (chunk.get("choices") or [{}])[0]
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
+                    delta = (choice.get("delta") or {}).get("content", "")
                     if delta:
                         print(delta, end="", flush=True)
                         full_text += delta
                 except (json.JSONDecodeError, KeyError):
                     continue
         print()
+        det = (usage_info or {}).get("completion_tokens_details") or {}
+        gebruikt = (usage_info or {}).get("completion_tokens")
+        redeneer = det.get("reasoning_tokens")
+        gecached = ((usage_info or {}).get("prompt_tokens_details") or {}).get("cached_tokens")
+        print(f"[{role}] finish_reason={finish_reason} completion_tokens={gebruikt} "
+              f"reasoning_tokens={redeneer} cached_prompt_tokens={gecached} "
+              f"content_chars={len(full_text)}", flush=True)
+
+        # Half afgeleverde JSON is nooit bruikbaar. Zonder deze check komt dat
+        # verderop naar boven als "kon geen JSON extraheren", wat de echte
+        # oorzaak verbergt.
+        if finish_reason == "length":
+            raise ValueError(
+                f"{role}: antwoord afgekapt op de max_tokens-grens "
+                f"({MAX_TOKENS.get(role, DEFAULT_MAX_TOKENS)}). Verbruikt: {gebruikt} tokens, "
+                f"waarvan {redeneer} aan reasoning. Verhoog MAX_TOKENS voor deze rol "
+                f"of kies een model dat minder redeneert."
+            )
         return full_text
