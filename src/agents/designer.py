@@ -17,6 +17,7 @@ Bij een retry wordt hier opnieuw nagedacht, niet bij de schrijver: een
 niet-redenerend model kan een bug niet bedenken.
 """
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -98,6 +99,40 @@ class DesignerAgent:
         return self._controleer_specs(plan, specs, role)
 
     # =========================
+    # IMPORTCONTROLE (deterministisch)
+    # =========================
+
+    @staticmethod
+    def _importfouten(specs: Dict[str, str]) -> Dict[str, List[str]]:
+        """Namen die een spec importeert maar die nergens in de doelspec staan.
+
+        Puur tekstueel en bewust ruimhartig: alleen als de naam nergens in de
+        spec van dat bestand voorkomt, is het zeker fout. Liever een echte fout
+        missen dan een goede spec laten herschrijven op een vals alarm.
+        """
+        fouten: Dict[str, List[str]] = {}
+        for pad, spec in specs.items():
+            for module, namen in re.findall(
+                r"from\s+src\.([a-zA-Z_][\w]*)\s+import\s+([^\n]+)", spec or ""
+            ):
+                doelpad = f"src/{module}.py"
+                doelspec = specs.get(doelpad)
+                if not doelspec:
+                    continue  # bestaat niet in dit project, daar gaat deze check niet over
+                for naam in re.split(r"[,\s()]+", namen):
+                    naam = naam.strip().strip("\\")
+                    if not naam or naam == "as" or naam.startswith("#") or naam == "*":
+                        continue
+                    if not re.match(r"^[A-Za-z_]\w*$", naam):
+                        continue
+                    if not re.search(rf"\b{re.escape(naam)}\b", doelspec):
+                        fouten.setdefault(pad, []).append(
+                            f"importeert {naam} uit {doelpad}, maar die naam komt "
+                            f"nergens voor in de specificatie van {doelpad}"
+                        )
+        return fouten
+
+    # =========================
     # ONTWERPCONTROLE
     # =========================
 
@@ -115,6 +150,17 @@ class DesignerAgent:
         """
         if not specs:
             return specs
+
+        # Eerst de mechanische controle. Die kost niets en is zeker; wat hij
+        # vindt hoeft het model niet meer op te merken.
+        mechanisch = self._importfouten(specs)
+        if mechanisch:
+            aantal = sum(len(v) for v in mechanisch.values())
+            print(f"[designer] importcontrole: {aantal} naam/namen die nergens "
+                  f"gedefinieerd worden", flush=True)
+            for pad, lijst in mechanisch.items():
+                for r in lijst:
+                    print(f"           - {pad}: {r}", flush=True)
 
         alles = "\n\n".join(f"--- {pad} ---\n{spec}" for pad, spec in specs.items())
         prompt = f"""Je controleert het ontwerp van een service voordat de code geschreven wordt.
@@ -170,7 +216,9 @@ of
 
         if not oordeel or oordeel.get("ok") is not False:
             print("[designer] ontwerpcontrole: ok", flush=True)
-            return specs
+            if not mechanisch:
+                return specs
+            oordeel = {"ok": False, "problemen": []}
 
         # Een reviewer schrijft nog wel eens "src/routes.py (functienaam) en
         # src/models.py" in het path-veld. Dat is geen reden om een echte
@@ -191,6 +239,9 @@ of
                     per_pad.setdefault(pad, []).append(tekst)
             else:
                 onbekend.append(f"{gemeld or '(geen pad)'}: {tekst}")
+
+        for pad, lijst in mechanisch.items():
+            per_pad.setdefault(pad, []).extend(lijst)
 
         if onbekend:
             # Nooit stil weggooien: dan lijkt de controle schoon terwijl er iets
