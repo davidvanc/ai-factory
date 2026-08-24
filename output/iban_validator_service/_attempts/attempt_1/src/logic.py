@@ -9,16 +9,11 @@ COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 DIGITS2_RE = re.compile(r"^[0-9]{2}$")
 FORBIDDEN_CHECK_DIGITS = frozenset({"00", "01", "99"})
 
-
 def normalize_iban(raw: str) -> str:
     return "".join(str(raw).split()).upper()
 
-
 def format_print(compact: str) -> str:
-    if not compact:
-        return ""
-    return " ".join(compact[i:i+4] for i in range(0, len(compact), 4))
-
+    return " ".join(compact[i:i + 4] for i in range(0, len(compact), 4))
 
 def format_iban(compact: str, style: str = "print") -> str:
     if style == "print":
@@ -27,248 +22,222 @@ def format_iban(compact: str, style: str = "print") -> str:
         return compact
     raise ValueError(f"onbekende style: {style}")
 
-
 def mod97(compact: str) -> int:
     if not compact:
         raise ValueError("lege IBAN voor mod-97 berekening")
     rearranged = compact[4:] + compact[:4]
-    digits = []
+    numeric_parts = []
     for ch in rearranged:
         if "0" <= ch <= "9":
-            digits.append(ch)
+            numeric_parts.append(ch)
         elif "A" <= ch <= "Z":
-            digits.append(str(ord(ch) - 55))
+            numeric_parts.append(str(ord(ch) - 55))
         else:
             raise ValueError(f"ongeldig teken voor mod-97 berekening: {ch}")
-    return int("".join(digits)) % 97
-
-
-def compute_mod97(iban: str) -> int:
-    return mod97(normalize_iban(iban))
-
+    numeric = "".join(numeric_parts)
+    return int(numeric) % 97
 
 def extract_parts(compact: str, entry: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     bban = compact[4:]
     bank_len = entry["bank_length"]
     branch_len = entry["branch_length"]
-    bank_identifier = bban[0:bank_len] if bank_len > 0 else None
-    if branch_len == 0:
-        branch_identifier = None
+    bank_identifier = bban[0:bank_len] or None
+    if branch_len > 0:
+        branch_identifier = bban[bank_len:bank_len + branch_len] or None
     else:
-        branch_identifier = bban[bank_len:bank_len+branch_len] if bank_len+branch_len <= len(bban) else None
-    account_start = bank_len + branch_len
-    account_number = bban[account_start:] if account_start < len(bban) else None
+        branch_identifier = None
+    account_number = bban[bank_len + branch_len:] or None
     return bank_identifier, branch_identifier, account_number
 
-
 def validate_iban(raw: str) -> Dict[str, Any]:
-    input_str = raw
+    input_val = raw
     compact = normalize_iban(raw)
     length = len(compact)
     formatted = format_print(compact)
+    errors_list = []
+    country_code = None
+    check_digits = None
+    bban = None
+    expected_length = None
+    checksum_mod97 = None
+    bank_identifier = None
+    branch_identifier = None
+    account_number = None
 
     if compact == "":
+        errors_list.append(errors.make_error(errors.EMPTY_INPUT))
         return {
-            "input": input_str,
-            "valid": False,
-            "country_code": None,
-            "check_digits": None,
-            "bban": None,
-            "length": length,
-            "expected_length": None,
-            "checksum_mod97": None,
-            "formatted": formatted,
-            "compact": compact,
-            "bank_identifier": None,
-            "branch_identifier": None,
-            "account_number": None,
-            "errors": [errors.make_error(errors.EMPTY_INPUT)]
-        }
-
-    country_code = None
-    if COUNTRY_RE.match(compact[:2]):
-        country_code = compact[:2]
-    check_digits = None
-    if DIGITS2_RE.match(compact[2:4]):
-        check_digits = compact[2:4]
-    entry = get_country(country_code) if country_code else None
-    expected_length = entry["iban_length"] if entry else None
-
-    if not ALNUM_RE.match(compact):
-        return {
-            "input": input_str,
+            "input": input_val,
             "valid": False,
             "country_code": country_code,
             "check_digits": check_digits,
-            "bban": None,
+            "bban": bban,
             "length": length,
             "expected_length": expected_length,
-            "checksum_mod97": None,
+            "checksum_mod97": checksum_mod97,
             "formatted": formatted,
             "compact": compact,
-            "bank_identifier": None,
-            "branch_identifier": None,
-            "account_number": None,
-            "errors": [errors.make_error(errors.INVALID_CHARACTERS)]
+            "bank_identifier": bank_identifier,
+            "branch_identifier": branch_identifier,
+            "account_number": account_number,
+            "errors": errors_list
+        }
+
+    if COUNTRY_RE.match(compact[:2]):
+        country_code = compact[:2]
+    if DIGITS2_RE.match(compact[2:4]):
+        check_digits = compact[2:4]
+    entry = None
+    if country_code is not None:
+        entry = get_country(country_code)
+        if entry is not None:
+            expected_length = entry["iban_length"]
+
+    if not ALNUM_RE.match(compact):
+        errors_list.append(errors.make_error(errors.INVALID_CHARACTERS))
+        return {
+            "input": input_val,
+            "valid": False,
+            "country_code": country_code,
+            "check_digits": check_digits,
+            "bban": bban,
+            "length": length,
+            "expected_length": expected_length,
+            "checksum_mod97": checksum_mod97,
+            "formatted": formatted,
+            "compact": compact,
+            "bank_identifier": bank_identifier,
+            "branch_identifier": branch_identifier,
+            "account_number": account_number,
+            "errors": errors_list
         }
 
     if not STRUCTURE_RE.match(compact):
+        errors_list.append(errors.make_error(errors.INVALID_STRUCTURE))
         return {
-            "input": input_str,
+            "input": input_val,
             "valid": False,
             "country_code": country_code,
             "check_digits": check_digits,
-            "bban": None,
+            "bban": bban,
             "length": length,
             "expected_length": expected_length,
-            "checksum_mod97": None,
+            "checksum_mod97": checksum_mod97,
             "formatted": formatted,
             "compact": compact,
-            "bank_identifier": None,
-            "branch_identifier": None,
-            "account_number": None,
-            "errors": [errors.make_error(errors.INVALID_STRUCTURE)]
+            "bank_identifier": bank_identifier,
+            "branch_identifier": branch_identifier,
+            "account_number": account_number,
+            "errors": errors_list
         }
 
     bban = compact[4:]
     if entry is None:
+        errors_list.append(errors.make_error(errors.UNKNOWN_COUNTRY, country_code=country_code))
         return {
-            "input": input_str,
+            "input": input_val,
             "valid": False,
             "country_code": country_code,
             "check_digits": check_digits,
             "bban": bban,
             "length": length,
             "expected_length": expected_length,
-            "checksum_mod97": None,
+            "checksum_mod97": checksum_mod97,
             "formatted": formatted,
             "compact": compact,
-            "bank_identifier": None,
-            "branch_identifier": None,
-            "account_number": None,
-            "errors": [errors.make_error(errors.UNKNOWN_COUNTRY, country_code=country_code)]
+            "bank_identifier": bank_identifier,
+            "branch_identifier": branch_identifier,
+            "account_number": account_number,
+            "errors": errors_list
         }
 
     if length != entry["iban_length"]:
+        errors_list.append(errors.make_error(errors.INVALID_LENGTH, length=length, expected_length=entry["iban_length"], country_code=country_code))
+        expected_length = entry["iban_length"]
         return {
-            "input": input_str,
+            "input": input_val,
             "valid": False,
             "country_code": country_code,
             "check_digits": check_digits,
             "bban": bban,
             "length": length,
-            "expected_length": entry["iban_length"],
-            "checksum_mod97": None,
+            "expected_length": expected_length,
+            "checksum_mod97": checksum_mod97,
             "formatted": formatted,
             "compact": compact,
-            "bank_identifier": None,
-            "branch_identifier": None,
-            "account_number": None,
-            "errors": [errors.make_error(
-                errors.INVALID_LENGTH,
-                length=length,
-                expected_length=entry["iban_length"],
-                country_code=country_code
-            )]
+            "bank_identifier": bank_identifier,
+            "branch_identifier": branch_identifier,
+            "account_number": account_number,
+            "errors": errors_list
         }
 
     bank_identifier, branch_identifier, account_number = extract_parts(compact, entry)
 
     if not re.fullmatch(entry["bban_regex"], bban):
+        errors_list.append(errors.make_error(errors.INVALID_FORMAT, bban=bban, bban_pattern=entry["bban_pattern"], country_code=country_code))
         return {
-            "input": input_str,
+            "input": input_val,
             "valid": False,
             "country_code": country_code,
             "check_digits": check_digits,
             "bban": bban,
             "length": length,
-            "expected_length": entry["iban_length"],
-            "checksum_mod97": None,
+            "expected_length": expected_length,
+            "checksum_mod97": checksum_mod97,
             "formatted": formatted,
             "compact": compact,
             "bank_identifier": bank_identifier,
             "branch_identifier": branch_identifier,
             "account_number": account_number,
-            "errors": [errors.make_error(
-                errors.INVALID_FORMAT,
-                bban=bban,
-                bban_pattern=entry["bban_pattern"],
-                country_code=country_code
-            )]
+            "errors": errors_list
         }
 
     if check_digits in FORBIDDEN_CHECK_DIGITS:
+        errors_list.append(errors.make_error(errors.INVALID_CHECK_DIGITS, check_digits=check_digits))
         return {
-            "input": input_str,
+            "input": input_val,
             "valid": False,
             "country_code": country_code,
             "check_digits": check_digits,
             "bban": bban,
             "length": length,
-            "expected_length": entry["iban_length"],
-            "checksum_mod97": None,
+            "expected_length": expected_length,
+            "checksum_mod97": checksum_mod97,
             "formatted": formatted,
             "compact": compact,
             "bank_identifier": bank_identifier,
             "branch_identifier": branch_identifier,
             "account_number": account_number,
-            "errors": [errors.make_error(errors.INVALID_CHECK_DIGITS, check_digits=check_digits)]
+            "errors": errors_list
         }
 
     try:
         checksum_mod97 = mod97(compact)
         if checksum_mod97 != 1:
-            return {
-                "input": input_str,
-                "valid": False,
-                "country_code": country_code,
-                "check_digits": check_digits,
-                "bban": bban,
-                "length": length,
-                "expected_length": entry["iban_length"],
-                "checksum_mod97": checksum_mod97,
-                "formatted": formatted,
-                "compact": compact,
-                "bank_identifier": bank_identifier,
-                "branch_identifier": branch_identifier,
-                "account_number": account_number,
-                "errors": [errors.make_error(errors.CHECKSUM_FAILED)]
-            }
+            errors_list.append(errors.make_error(errors.CHECKSUM_FAILED))
+            valid = False
         else:
-            return {
-                "input": input_str,
-                "valid": True,
-                "country_code": country_code,
-                "check_digits": check_digits,
-                "bban": bban,
-                "length": length,
-                "expected_length": entry["iban_length"],
-                "checksum_mod97": checksum_mod97,
-                "formatted": formatted,
-                "compact": compact,
-                "bank_identifier": bank_identifier,
-                "branch_identifier": branch_identifier,
-                "account_number": account_number,
-                "errors": []
-            }
+            valid = True
     except Exception as exc:
-        return {
-            "input": input_str,
-            "valid": False,
-            "country_code": country_code,
-            "check_digits": check_digits,
-            "bban": bban,
-            "length": length,
-            "expected_length": entry["iban_length"],
-            "checksum_mod97": None,
-            "formatted": formatted,
-            "compact": compact,
-            "bank_identifier": bank_identifier,
-            "branch_identifier": branch_identifier,
-            "account_number": account_number,
-            "errors": [errors.make_error(errors.INTERNAL_ERROR, detail=str(exc))]
-        }
+        errors_list.append(errors.make_error(errors.INTERNAL_ERROR, detail=str(exc)))
+        valid = False
 
+    return {
+        "input": input_val,
+        "valid": valid,
+        "country_code": country_code,
+        "check_digits": check_digits,
+        "bban": bban,
+        "length": length,
+        "expected_length": expected_length,
+        "checksum_mod97": checksum_mod97,
+        "formatted": formatted,
+        "compact": compact,
+        "bank_identifier": bank_identifier,
+        "branch_identifier": branch_identifier,
+        "account_number": account_number,
+        "errors": errors_list
+    }
 
 def validate_bulk_item(index: int, item: Any, style: str = "print") -> Dict[str, Any]:
     try:
@@ -314,23 +283,22 @@ def validate_bulk_item(index: int, item: Any, style: str = "print") -> Dict[str,
             "errors": [errors.make_error(errors.INTERNAL_ERROR, detail=str(exc))]
         }
 
-
 def validate_bulk(items: List[Any], style: str = "print", fail_fast: bool = False) -> Dict[str, Any]:
     results = []
     valid_count = 0
     invalid_count = 0
-    errors_count = 0
+    error_count = 0
     stopped_early = False
 
-    for idx, item in enumerate(items):
-        result = validate_bulk_item(idx, item, style)
+    for index, item in enumerate(items):
+        result = validate_bulk_item(index, item, style)
         results.append(result)
         if result["status"] == "valid":
             valid_count += 1
         elif result["status"] == "invalid":
             invalid_count += 1
         else:
-            errors_count += 1
+            error_count += 1
 
         if fail_fast and result["status"] != "valid":
             stopped_early = True
@@ -341,7 +309,7 @@ def validate_bulk(items: List[Any], style: str = "print", fail_fast: bool = Fals
         "summary": {
             "valid": valid_count,
             "invalid": invalid_count,
-            "errors": errors_count,
+            "errors": error_count,
             "stopped_early": stopped_early
         },
         "results": results

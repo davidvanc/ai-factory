@@ -24,9 +24,9 @@ def test_bulk_mixed_list_returns_200_and_per_item_results(client):
     }
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    assert data["count"] == 5
-    results = data["results"]
+    body = response.json()
+    assert body["count"] == 5
+    results = body["results"]
     assert len(results) == 5
     assert [r["index"] for r in results] == [0, 1, 2, 3, 4]
 
@@ -65,14 +65,10 @@ def test_bulk_preserves_order_and_indices(client):
     }
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    results = data["results"]
+    body = response.json()
+    results = body["results"]
     assert [r["index"] for r in results] == [0, 1, 2]
-    assert [r["input"] for r in results] == [
-        "BE68539007547034",
-        "XX00INVALID",
-        "NL91ABNA0417164300",
-    ]
+    assert [r["input"] for r in results] == payload["ibans"]
     assert [r["status"] for r in results] == ["valid", "invalid", "valid"]
 
 
@@ -85,13 +81,14 @@ def test_bulk_summary_counts_mixed_list(client):
             "XX00INVALID",
             12345,
         ],
+        "style": "print",
         "fail_fast": False,
     }
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    assert data["count"] == 5
-    summary = data["summary"]
+    body = response.json()
+    assert body["count"] == 5
+    summary = body["summary"]
     assert summary["valid"] == 2
     assert summary["invalid"] == 2
     assert summary["errors"] == 1
@@ -101,41 +98,46 @@ def test_bulk_summary_counts_mixed_list(client):
 def test_bulk_handles_none_empty_and_non_string_items(client):
     payload = {
         "ibans": [None, "", 42, {"iban": "NL91ABNA0417164300"}, ["NL91ABNA0417164300"]],
+        "style": "print",
         "fail_fast": False,
     }
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    assert data["count"] == 5
-    results = data["results"]
+    body = response.json()
+    assert body["count"] == 5
+    results = body["results"]
     for r in results:
         assert r["status"] in ("invalid", "error")
         assert r["valid"] is False
         assert len(r["errors"]) >= 1
-    error_codes_0 = [e["code"] for e in results[0]["errors"]]
-    assert "NOT_A_STRING" in error_codes_0
-    error_codes_1 = [e["code"] for e in results[1]["errors"]]
-    assert "EMPTY_INPUT" in error_codes_1
-    error_codes_2 = [e["code"] for e in results[2]["errors"]]
-    assert "NOT_A_STRING" in error_codes_2
-    summary = data["summary"]
+
+    error_codes0 = [e["code"] for e in results[0]["errors"]]
+    assert "NOT_A_STRING" in error_codes0
+
+    error_codes1 = [e["code"] for e in results[1]["errors"]]
+    assert "EMPTY_INPUT" in error_codes1
+
+    error_codes2 = [e["code"] for e in results[2]["errors"]]
+    assert "NOT_A_STRING" in error_codes2
+
+    summary = body["summary"]
     assert summary["errors"] == 4
     assert summary["invalid"] == 1
     assert summary["valid"] == 0
 
 
 def test_bulk_empty_list(client):
-    payload = {"ibans": [], "fail_fast": False}
+    payload = {"ibans": [], "style": "print", "fail_fast": False}
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    assert data["count"] == 0
-    assert data["results"] == []
-    assert data["summary"] == {"valid": 0, "invalid": 0, "errors": 0, "stopped_early": False}
+    body = response.json()
+    assert body["count"] == 0
+    assert body["results"] == []
+    assert body["summary"] == {"valid": 0, "invalid": 0, "errors": 0, "stopped_early": False}
 
 
 def test_bulk_above_max_batch_size_returns_422(client):
-    payload = {"ibans": ["NL91ABNA0417164300"] * (MAX_BULK_ITEMS + 1), "fail_fast": False}
+    payload = {"ibans": ["NL91ABNA0417164300"] * (MAX_BULK_ITEMS + 1)}
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 422
 
@@ -143,16 +145,17 @@ def test_bulk_above_max_batch_size_returns_422(client):
 def test_bulk_fail_fast_stops_after_first_non_valid_item(client):
     payload = {
         "ibans": ["NL91ABNA0417164300", "NL91ABNA0417164301", "DE89370400440532013000"],
+        "style": "print",
         "fail_fast": True,
     }
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    assert data["count"] == 2
-    results = data["results"]
+    body = response.json()
+    assert body["count"] == 2
+    results = body["results"]
     assert len(results) == 2
     assert [r["index"] for r in results] == [0, 1]
-    summary = data["summary"]
+    summary = body["summary"]
     assert summary["valid"] == 1
     assert summary["invalid"] == 1
     assert summary["errors"] == 0
@@ -163,8 +166,8 @@ def test_bulk_style_compact_applies_to_formatted(client):
     payload = {"ibans": ["nl91 abna 0417 1643 00"], "style": "compact"}
     response = client.post("/validate/bulk", json=payload)
     assert response.status_code == 200
-    data = response.json()
-    results = data["results"]
+    body = response.json()
+    results = body["results"]
     assert results[0]["formatted"] == "NL91ABNA0417164300"
     assert results[0]["compact"] == "NL91ABNA0417164300"
     assert results[0]["status"] == "valid"

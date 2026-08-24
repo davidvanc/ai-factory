@@ -21,7 +21,7 @@ MESSAGES: Dict[str, str] = {
     INVALID_CHECK_DIGITS: "Controlecijfers '{check_digits}' zijn ongeldig (00, 01 en 99 zijn niet toegestaan)",
     CHECKSUM_FAILED: "mod-97 checksum is niet gelijk aan 1",
     NOT_A_STRING: "Item is geen string",
-    INTERNAL_ERROR: "Onverwachte fout bij verwerken van item: {detail}"
+    INTERNAL_ERROR: "Onverwachte fout bij verwerken van item: {detail}",
 }
 
 def make_error(code: str, **kwargs: Any) -> Dict[str, str]:

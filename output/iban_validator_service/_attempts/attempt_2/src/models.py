@@ -4,15 +4,12 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 MAX_BULK_ITEMS: int = int(os.getenv("IBAN_MAX_BULK_ITEMS", "100"))
 
-
 class ErrorItem(BaseModel):
     code: StrictStr
     message: StrictStr
 
-
 class IbanRequest(BaseModel):
     iban: StrictStr
-
 
 class ValidateResponse(BaseModel):
     input: str
@@ -30,11 +27,9 @@ class ValidateResponse(BaseModel):
     account_number: Optional[str] = None
     errors: List[ErrorItem]
 
-
 class FormatRequest(BaseModel):
     iban: StrictStr
     style: Literal["print", "compact", "electronic"] = "print"
-
 
 class FormatResponse(BaseModel):
     input: str
@@ -44,12 +39,10 @@ class FormatResponse(BaseModel):
     valid: bool
     errors: List[ErrorItem]
 
-
 class BulkRequest(BaseModel):
     ibans: List[Any] = Field(..., max_length=MAX_BULK_ITEMS)
     style: Literal["print", "compact", "electronic"] = "print"
     fail_fast: StrictBool = False
-
 
 class BulkItemResult(BaseModel):
     index: int
@@ -63,19 +56,16 @@ class BulkItemResult(BaseModel):
     expected_length: Optional[int] = None
     errors: List[ErrorItem]
 
-
 class BulkSummary(BaseModel):
     valid: int
     invalid: int
     errors: int
     stopped_early: bool
 
-
 class BulkResponse(BaseModel):
     count: int
     summary: BulkSummary
     results: List[BulkItemResult]
-
 
 class CountryEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -87,11 +77,9 @@ class CountryEntry(BaseModel):
     sepa: bool
     example: str
 
-
 class CountriesResponse(BaseModel):
     count: int
     countries: List[CountryEntry]
-
 
 class StatusResponse(BaseModel):
     status: str
