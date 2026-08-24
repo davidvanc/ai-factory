@@ -73,7 +73,7 @@ class DesignerAgent:
                 if not ontbreekt:
                     # Ook dit pad langs de ontwerpcontrole. Dit is het normale
                     # geval, dus hier overslaan betekent nooit controleren.
-                    return self._controleer_specs(plan, specs, role)
+                    return self._controleer_specs(plan, specs, role, feedback)
                 print(f"[designer] geen spec voor {ontbreekt} in een ronde - "
                       f"opnieuw in golven", flush=True)
             except TE_VEEL_GEVRAAGD as e:
@@ -97,7 +97,7 @@ class DesignerAgent:
             print(f"[designer] geen spec gekregen voor {ontbreekt} - "
                   f"die bestanden krijgen alleen het plan mee", flush=True)
 
-        return self._controleer_specs(plan, specs, role)
+        return self._controleer_specs(plan, specs, role, feedback)
 
     # =========================
     # IMPORTCONTROLE (deterministisch)
@@ -153,6 +153,7 @@ class DesignerAgent:
         plan: Dict[str, Any],
         specs: Dict[str, str],
         role: str,
+        feedback: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         """Kijkt het hele ontwerp na voor er ook maar een regel geschreven wordt.
 
@@ -161,6 +162,18 @@ class DesignerAgent:
         gaat ruzien, en dan verlies je goede specs.
         """
         if not specs:
+            return specs
+
+        # Alleen bij het eerste ontwerp. Bij een retry heeft de designer de
+        # testoutput en de failure-history al voor zich; een tweede mening
+        # daar bovenop vecht met die feedback in plaats van hem aan te vullen.
+        #
+        # Gemeten over vier runs: met de controle op elke poging bleef het
+        # aantal falende tests schuiven (12, 12, 13, 13) zonder te convergeren,
+        # en ging de base64-taak van 1 poging en 0,97 dollar naar 6 pogingen,
+        # 7,73 dollar en gefaald. De twee echte bugs die deze controle vond,
+        # vond hij bij het eerste ontwerp - daar zit zijn waarde.
+        if feedback:
             return specs
 
         # Eerst de mechanische controle. Die kost niets en is zeker; wat hij
