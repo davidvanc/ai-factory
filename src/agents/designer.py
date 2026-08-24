@@ -92,6 +92,123 @@ class DesignerAgent:
         if ontbreekt:
             print(f"[designer] geen spec gekregen voor {ontbreekt} - "
                   f"die bestanden krijgen alleen het plan mee", flush=True)
+
+        return self._controleer_specs(plan, specs, role)
+
+    # =========================
+    # ONTWERPCONTROLE
+    # =========================
+
+    def _controleer_specs(
+        self,
+        plan: Dict[str, Any],
+        specs: Dict[str, str],
+        role: str,
+    ) -> Dict[str, str]:
+        """Kijkt het hele ontwerp na voor er ook maar een regel geschreven wordt.
+
+        Drie vragen, en niets anders. Een reviewer die ook over stijl en
+        architectuur mag oordelen wordt een tweede ontwerper die met de eerste
+        gaat ruzien, en dan verlies je goede specs.
+        """
+        if not specs:
+            return specs
+
+        alles = "\n\n".join(f"--- {pad} ---\n{spec}" for pad, spec in specs.items())
+        prompt = f"""Je controleert het ontwerp van een service voordat de code geschreven wordt.
+
+Dit is het plan:
+Beschrijving: {plan.get('description', '')}
+Endpoints: {json.dumps(plan.get('endpoints', []), indent=2, ensure_ascii=False)}
+Tests die moeten slagen: {json.dumps(plan.get('tests', []), indent=2, ensure_ascii=False)}
+
+Dit is het ontwerp:
+{alles}
+
+Beantwoord voor elk element deze drie vragen. Meld alleen wat er FOUT is.
+
+1. Staat het in het plan? Wijs de regel in de beschrijving, de endpoints of de
+   tests aan die om dit endpoint, veld, statuscode of foutcode vraagt. Kun je
+   die niet aanwijzen, dan is het verzonnen scope en moet het eruit.
+
+2. Maakt de service dit antwoord zelf? Wijs de functie in het ontwerp aan die
+   het produceert. Kun je die niet aanwijzen, dan komt het van FastAPI, van de
+   middleware of van de webserver - en dan is de vorm ervan onbekend en mag een
+   test er niets over asserten behalve de statuscode.
+
+3. Test elke test gedrag of een implementatiedetail? Een test die object-
+   identiteit, caching, interne datastructuren of private functies controleert,
+   test het hoe in plaats van het wat. Die moet weg of herschreven worden naar
+   het gedrag dat het plan noemt.
+
+Beoordeel NIETS anders. Geen stijl, geen naamgeving, geen architectuur, geen
+suggesties ter verbetering. Is er niets fout, zeg dat dan.
+
+Antwoord met alleen JSON:
+{{"ok": true}}
+of
+{{"ok": false, "problemen": [{{"path": "tests/test_logic.py", "probleem": "..."}}]}}"""
+
+        print("[designer] ontwerpcontrole...", flush=True)
+        try:
+            oordeel = extract_json(
+                self.llm.generate(prompt, role="spec_review", temperature=0.0),
+                expect="object",
+            )
+        except Exception as e:
+            # Een controle die de build sloopt is erger dan geen controle.
+            print(f"[designer] ontwerpcontrole overgeslagen: {e}", flush=True)
+            return specs
+
+        if not oordeel or oordeel.get("ok") is not False:
+            print("[designer] ontwerpcontrole: ok", flush=True)
+            return specs
+
+        problemen = [p for p in (oordeel.get("problemen") or []) if p.get("path") in specs]
+        if not problemen:
+            print("[designer] ontwerpcontrole: geen bruikbare bevindingen", flush=True)
+            return specs
+
+        per_pad: Dict[str, List[str]] = {}
+        for p in problemen:
+            per_pad.setdefault(p["path"], []).append(str(p.get("probleem", "")))
+
+        print(f"[designer] ontwerpcontrole: {len(problemen)} probleem(en) in "
+              f"{len(per_pad)} bestand(en)", flush=True)
+        for pad, lijst in per_pad.items():
+            for pr in lijst:
+                print(f"           - {pad}: {pr}", flush=True)
+
+        # Eenmalig herspecificeren. Geen lus: vindt de reviewer daarna nog iets,
+        # dan vangt de tester het maar op.
+        herstel = f"""{prompt}
+
+=== GEVONDEN PROBLEMEN ===
+{json.dumps(per_pad, indent=2, ensure_ascii=False)}
+
+Herschrijf de specificaties van precies deze bestanden zodat de problemen
+opgelost zijn: {json.dumps(list(per_pad), ensure_ascii=False)}
+Haal weg wat verzonnen is, laat de rest ongemoeid, en verzin niets nieuws.
+
+Antwoord met alleen JSON:
+{{"bestanden": [{{"path": "...", "spec": "..."}}]}}"""
+        try:
+            data = extract_json(
+                self.llm.generate(herstel, role=role, temperature=0.2),
+                expect="object",
+            )
+        except Exception as e:
+            print(f"[designer] herspecificatie mislukt ({e}), ontwerp blijft zoals het was",
+                  flush=True)
+            return specs
+
+        for item in (data or {}).get("bestanden") or []:
+            pad, spec = (item or {}).get("path"), (item or {}).get("spec")
+            if pad in specs and spec:
+                specs[pad] = spec if isinstance(spec, str) else json.dumps(
+                    spec, indent=2, ensure_ascii=False
+                )
+                print(f"[designer] spec bijgesteld: {pad}", flush=True)
         return specs
 
     def _golven(self, paden: List[str]) -> List[List[str]]:

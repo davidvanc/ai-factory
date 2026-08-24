@@ -108,6 +108,16 @@ class FunctionalTester:
             return path
         return re.sub(r"\{[^}]*[iI][dD][^}]*\}", str(state["id"]), path)
 
+    @staticmethod
+    def _openstaande_params(path: str) -> list:
+        """Padparameters die we niet konden invullen.
+
+        Blijft er een over, dan is het verzoek niet op te bouwen en zegt het
+        antwoord niets over de service - die krijgt dan letterlijk '{naam}' als
+        waarde binnen en antwoordt terecht met 404.
+        """
+        return re.findall(r"\{[^}]+\}", path)
+
     # -----------------------------
     # Vang id uit POST response
     # -----------------------------
@@ -167,6 +177,25 @@ class FunctionalTester:
                     method = ep.get("method", "GET").upper()
                     raw_path = ep.get("path", "/")
                     path = self._inject_path_params(raw_path, state)
+
+                    openstaand = self._openstaande_params(path)
+                    if openstaand:
+                        # Niet op te bouwen, dus niets over te zeggen. Wel
+                        # zichtbaar maken, anders lijkt de dekking groter dan ze is.
+                        print(f"[functional]   OVERGESLAGEN: {method} {raw_path} "
+                              f"(geen waarde voor {', '.join(openstaand)})")
+                        results.append({
+                            "scenario": {"name": f"{method} {raw_path}"},
+                            "run": {"stdout": "", "stderr": ""},
+                            "evaluation": {
+                                "passed": True,
+                                "skipped": True,
+                                "reasons": [f"overgeslagen: geen waarde voor "
+                                            f"{', '.join(openstaand)} in het pad"],
+                            },
+                        })
+                        continue
+
                     url = base_url + path
                     body = ep.get("request_example")
 

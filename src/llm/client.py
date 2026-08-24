@@ -35,6 +35,10 @@ MODEL_ROUTES = {
     # Controleert de contractbestanden tegen het plan voor de rest erop
     # gebouwd wordt. Kleine input, klein antwoord, dus goedkoop.
     "contract_review": "~anthropic/claude-sonnet-latest",
+    # Kijkt het hele ontwerp na voor er geschreven wordt.
+    "spec_review":     "~anthropic/claude-sonnet-latest",
+    # Beoordeelt bij een gefaalde test of de code of de test fout is.
+    "failure_triage":  "~anthropic/claude-sonnet-latest",
     # Destilleert lessen uit de mislukte pogingen van een run.
     "lesson_extractor": "~anthropic/claude-sonnet-latest",
     "consultant_scientific": "~google/gemini-pro-latest",
@@ -72,6 +76,8 @@ TIMEOUTS = {
     "consultant_scientific": 120, #  2 min
     "judge":     180,   # 3 min
     "contract_review": 180,   # 3 min
+    "spec_review":     300,   # 5 min - leest alle specs
+    "failure_triage":  300,   # 5 min - leest code en fouten
     "lesson_extractor": 180,   # 3 min
 }
 

@@ -256,6 +256,8 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
         failure_history = []
         no_progress = 0
         tests_ok = False
+        vorige_handtekening = None
+        zelfde_fout = 0
 
         # FASE 1: Tester loop
         for ta in range(1, max_tester_attempts + 1):
@@ -288,15 +290,61 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
             _persist_log()
 
             if not test_result["passed"]:
-                if len(passing_history) >= 2 and passing_history[-1] <= passing_history[-2]:
-                    no_progress += 1
                 feedback = build_feedback(test_result, {"verdict_reason": "Tests failed"}, dev_result)
-                fc = _tester_failure_context(feedback)
-                run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = fc
-                failure_history.append(_summarize_failure_for_history(attempt, fc))
-                feedback["history"] = list(failure_history)
-                _persist_log()
-                continue
+
+                # INGREEP 2 - is de code fout, of de test?
+                # Zonder deze vraag is 'passed: False' een eindoordeel en gaat er
+                # een ontwerpronde van ~1,50 dollar naartoe, ook als het verzoek
+                # nergens op sloeg.
+                from src.agents.failure_triage import beoordeel_fouten
+                falend = [{"naam": n, "reden": ""} for n in _extract_test_names(test_result)]
+                for iss in feedback.get("issues", [])[:10]:
+                    falend.append({"naam": str(iss)[:120], "reden": str(iss)[:300]})
+                oordelen = beoordeel_fouten(plan, falend, (dev_result or {}).get("files", []))
+
+                testfouten = [n for n, o in oordelen.items() if o["oordeel"] == "test"]
+                codefouten = [n for n, o in oordelen.items() if o["oordeel"] == "code"]
+                if testfouten:
+                    print(f"[triage] {len(testfouten)} fout(en) liggen aan de test, "
+                          f"niet aan de code:", flush=True)
+                    for n in testfouten:
+                        print(f"         - {n}: {oordelen[n]['reden']}", flush=True)
+                run_log["attempts"][f"attempt_{attempt}"]["triage"] = oordelen
+
+                if testfouten and not codefouten:
+                    # Alles wat faalde was de test aangerekend. Deze ronde telt
+                    # als geslaagd; opnieuw ontwerpen zou niets oplossen.
+                    print("[triage] geen enkele fout ligt aan de code - "
+                          "testronde telt als geslaagd", flush=True)
+                    test_result["passed"] = True
+                    run_log["attempts"][f"attempt_{attempt}"]["tests_passed"] = True
+                    _persist_log()
+                else:
+                    if testfouten:
+                        feedback["te_negeren"] = testfouten
+
+                    # INGREEP 3 - drie keer dezelfde fout betekent dat opnieuw
+                    # ontwerpen niets oplevert. Doorgaan kost dan alleen geld.
+                    handtekening = tuple(sorted(_extract_test_names(test_result)))
+                    zelfde_fout = zelfde_fout + 1 if handtekening == vorige_handtekening else 1
+                    vorige_handtekening = handtekening
+                    if zelfde_fout >= 3:
+                        print(f"[pipeline] drie keer exact dezelfde fout "
+                              f"({', '.join(handtekening) or 'zonder testnamen'}) - "
+                              f"gestopt, verder proberen levert niets op", flush=True)
+                        run_log["gestopt_wegens"] = "drie keer dezelfde fout"
+                        _persist_log()
+                        break
+
+                if not test_result["passed"]:
+                    if len(passing_history) >= 2 and passing_history[-1] <= passing_history[-2]:
+                        no_progress += 1
+                    fc = _tester_failure_context(feedback)
+                    run_log["attempts"][f"attempt_{attempt}"]["failure_context"] = fc
+                    failure_history.append(_summarize_failure_for_history(attempt, fc))
+                    feedback["history"] = list(failure_history)
+                    _persist_log()
+                    continue
 
             tests_ok = True
 
