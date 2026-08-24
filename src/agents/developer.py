@@ -245,11 +245,16 @@ Begin direct met de eerste regel van het bestand."""
                       "contractbestanden gaan mee in de herschrijfset", flush=True)
             opnieuw |= contracten
 
-        # Twee of meer eerdere failures: gericht repareren is gokwerk geworden.
-        if len(feedback.get("history") or []) >= 2:
-            print("[developer] derde poging zonder doorbraak: alles opnieuw", flush=True)
-            return set(paden)
-
+        # Hier stond: vanaf de derde poging alles opnieuw. Die regel komt uit de
+        # tijd dat de developer zelf schreef, toen "alles opnieuw" een aanroep
+        # was. In de twee-fasen-opzet betekent het een volledige ontwerpronde op
+        # Opus, en in golvenmodus zelfs drie. Gemeten op de IBAN-taak: 14
+        # designer-aanroepen en 315.381 tokens in een run van 11,89 dollar.
+        #
+        # De herhalingsrem in de pipeline vangt inmiddels af waar deze regel
+        # voor bedoeld was: drie keer dezelfde fout stopt de run. Alles opnieuw
+        # schrijven voegt daar niets aan toe behalve kosten, en gooide in een
+        # eerdere run vier rondes werkende code weg.
         return opnieuw or set(paden)
 
     # =========================
