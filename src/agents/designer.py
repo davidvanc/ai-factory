@@ -69,7 +69,9 @@ class DesignerAgent:
                 specs = self._ontwerp(plan, paden, {}, feedback, role)
                 ontbreekt = [p for p in paden if p not in specs]
                 if not ontbreekt:
-                    return specs
+                    # Ook dit pad langs de ontwerpcontrole. Dit is het normale
+                    # geval, dus hier overslaan betekent nooit controleren.
+                    return self._controleer_specs(plan, specs, role)
                 print(f"[designer] geen spec voor {ontbreekt} in een ronde - "
                       f"opnieuw in golven", flush=True)
             except TE_VEEL_GEVRAAGD as e:
