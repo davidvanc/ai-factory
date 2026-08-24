@@ -325,7 +325,13 @@ def run_factory_pipeline(task: str, max_tester_attempts: int = 6,
 
                     # INGREEP 3 - drie keer dezelfde fout betekent dat opnieuw
                     # ontwerpen niets oplevert. Doorgaan kost dan alleen geld.
-                    handtekening = tuple(sorted(_extract_test_names(test_result)))
+                    # Zonder testnamen (bv. een gefaalde functionele test of een
+                    # ImportError) is de lijst leeg, en dan lijkt elke fout op
+                    # elke andere. Val dan terug op de issues zelf.
+                    namen = sorted(_extract_test_names(test_result))
+                    handtekening = tuple(namen) if namen else tuple(
+                        sorted(str(i)[:200] for i in feedback.get("issues", []))
+                    )
                     zelfde_fout = zelfde_fout + 1 if handtekening == vorige_handtekening else 1
                     vorige_handtekening = handtekening
                     if zelfde_fout >= 3:

@@ -16,6 +16,7 @@ daarna naar een goedkoop model dat niet redeneert.
 Bij een retry wordt hier opnieuw nagedacht, niet bij de schrijver: een
 niet-redenerend model kan een bug niet bedenken.
 """
+import ast
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -106,30 +107,41 @@ class DesignerAgent:
     def _importfouten(specs: Dict[str, str]) -> Dict[str, List[str]]:
         """Namen die een spec importeert maar die nergens in de doelspec staan.
 
-        Puur tekstueel en bewust ruimhartig: alleen als de naam nergens in de
-        spec van dat bestand voorkomt, is het zeker fout. Liever een echte fout
-        missen dan een goede spec laten herschrijven op een vals alarm.
+        De kandidaatregel wordt geparseerd, niet met een regex uitgelezen. Een
+        eerdere versie pakte alles achter `import` tot regeleinde en meldde
+        daardoor gewone woorden uit lopende tekst als ontbrekende namen. Wat
+        niet als import parseert, is geen import.
+
+        Bij `X as Y` telt X: dat is de naam die in de doelspec moet staan.
         """
         fouten: Dict[str, List[str]] = {}
         for pad, spec in specs.items():
-            for module, namen in re.findall(
-                r"from\s+src\.([a-zA-Z_][\w]*)\s+import\s+([^\n]+)", spec or ""
-            ):
-                doelpad = f"src/{module}.py"
-                doelspec = specs.get(doelpad)
-                if not doelspec:
-                    continue  # bestaat niet in dit project, daar gaat deze check niet over
-                for naam in re.split(r"[,\s()]+", namen):
-                    naam = naam.strip().strip("\\")
-                    if not naam or naam == "as" or naam.startswith("#") or naam == "*":
+            for regel in (spec or "").splitlines():
+                regel = regel.strip()
+                if not regel.startswith("from src."):
+                    continue
+                try:
+                    boom = ast.parse(regel)
+                except SyntaxError:
+                    continue  # proza dat toevallig met "from src." begint
+                for knoop in boom.body:
+                    if not isinstance(knoop, ast.ImportFrom) or not knoop.module:
                         continue
-                    if not re.match(r"^[A-Za-z_]\w*$", naam):
+                    if not knoop.module.startswith("src."):
                         continue
-                    if not re.search(rf"\b{re.escape(naam)}\b", doelspec):
-                        fouten.setdefault(pad, []).append(
-                            f"importeert {naam} uit {doelpad}, maar die naam komt "
-                            f"nergens voor in de specificatie van {doelpad}"
-                        )
+                    doelpad = "src/" + knoop.module.split(".", 1)[1].replace(".", "/") + ".py"
+                    doelspec = specs.get(doelpad)
+                    if not doelspec:
+                        continue  # zit niet in dit project
+                    for alias in knoop.names:
+                        naam = alias.name
+                        if naam == "*":
+                            continue
+                        if not re.search(rf"\b{re.escape(naam)}\b", doelspec):
+                            fouten.setdefault(pad, []).append(
+                                f"importeert {naam} uit {doelpad}, maar die naam komt "
+                                f"nergens voor in de specificatie van {doelpad}"
+                            )
         return fouten
 
     # =========================
