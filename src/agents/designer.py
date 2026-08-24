@@ -146,6 +146,12 @@ Beantwoord voor elk element deze drie vragen. Meld alleen wat er FOUT is.
 Beoordeel NIETS anders. Geen stijl, geen naamgeving, geen architectuur, geen
 suggesties ter verbetering. Is er niets fout, zeg dat dan.
 
+Het veld "path" moet EXACT een van deze paden zijn, zonder toevoegingen:
+{json.dumps(list(specs), indent=2)}
+
+Raakt een probleem meerdere bestanden, geef dan een aparte regel per bestand.
+Schrijf geen functienamen of uitleg in het path-veld; dat hoort in "probleem".
+
 Antwoord met alleen JSON:
 {{"ok": true}}
 of
@@ -166,14 +172,40 @@ of
             print("[designer] ontwerpcontrole: ok", flush=True)
             return specs
 
-        problemen = [p for p in (oordeel.get("problemen") or []) if p.get("path") in specs]
-        if not problemen:
-            print("[designer] ontwerpcontrole: geen bruikbare bevindingen", flush=True)
+        # Een reviewer schrijft nog wel eens "src/routes.py (functienaam) en
+        # src/models.py" in het path-veld. Dat is geen reden om een echte
+        # bevinding weg te gooien, dus zoek welke bekende paden erin voorkomen.
+        per_pad: Dict[str, List[str]] = {}
+        onbekend: List[str] = []
+        for p in (oordeel.get("problemen") or []):
+            gemeld = str((p or {}).get("path", ""))
+            tekst = str((p or {}).get("probleem", ""))
+            if not tekst:
+                continue
+            if gemeld in specs:
+                per_pad.setdefault(gemeld, []).append(tekst)
+                continue
+            treffers = [pad for pad in specs if pad and pad in gemeld]
+            if treffers:
+                for pad in treffers:
+                    per_pad.setdefault(pad, []).append(tekst)
+            else:
+                onbekend.append(f"{gemeld or '(geen pad)'}: {tekst}")
+
+        if onbekend:
+            # Nooit stil weggooien: dan lijkt de controle schoon terwijl er iets
+            # gevonden is dat niemand meer ziet.
+            print(f"[designer] ontwerpcontrole: {len(onbekend)} bevinding(en) zonder "
+                  f"herkenbaar bestand, niet verwerkt:", flush=True)
+            for r in onbekend:
+                print(f"           ? {r}", flush=True)
+
+        if not per_pad:
+            print("[designer] ontwerpcontrole: geen bevindingen op een bekend bestand",
+                  flush=True)
             return specs
 
-        per_pad: Dict[str, List[str]] = {}
-        for p in problemen:
-            per_pad.setdefault(p["path"], []).append(str(p.get("probleem", "")))
+        problemen = [{"path": pad} for pad in per_pad]
 
         print(f"[designer] ontwerpcontrole: {len(problemen)} probleem(en) in "
               f"{len(per_pad)} bestand(en)", flush=True)
