@@ -37,6 +37,18 @@ CONTRACT_NAMEN = (
 # blijft ruim onder de 64.000 en ver onder de timeout van 15 minuten.
 MAX_PER_GOLF = 8
 
+# Ontwerpcontrole aan of uit. Uit sinds 2026-08-24, want hij maakte de pipeline
+# meetbaar slechter: met de controle ging base64 van 1 poging en bash,97 naar 6
+# pogingen, ,73 en gefaald, met 12-12-13-13 falende tests zonder convergentie.
+# Elke bevinding trok een herspecificatie die de specs veranderde, wat de
+# volgende ronde andere tests brak.
+#
+# De code blijft staan, want hij vond wel twee echte bugs die geen enkele test
+# zag: een /status die 78 landen beloofde terwijl het register er 36 had, en een
+# validator die een 500 gaf in plaats van een 422. Wie hem terug wil: deze vlag
+# op True. Reken dan op meer pogingen per run.
+SPEC_REVIEW_AAN = False
+
 # Redenen om alsnog op te knippen: het antwoord paste niet, duurde te lang, of
 # kwam er onbruikbaar uit. Alle drie betekenen "te veel in een keer gevraagd".
 TE_VEEL_GEVRAAGD = (
@@ -161,7 +173,7 @@ class DesignerAgent:
         architectuur mag oordelen wordt een tweede ontwerper die met de eerste
         gaat ruzien, en dan verlies je goede specs.
         """
-        if not specs:
+        if not specs or not SPEC_REVIEW_AAN:
             return specs
 
         # Alleen bij het eerste ontwerp. Bij een retry heeft de designer de
