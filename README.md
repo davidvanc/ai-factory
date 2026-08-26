@@ -1,6 +1,6 @@
 # AI Software Factory
 
-> Autonome multi-agent AI software factory. Geef een beschrijving, krijg een productie-klare microservice — gepusht naar GitHub.
+> Experiment: kunnen verschillende modellen met elk een eigen rol samen een microservice bouwen? Geef een beschrijving, krijg code met tests en een Docker-image. Over 31 runs haalde 54,8 % het tot een goedgekeurd resultaat.
 
 Draait op **één machine**. Geen VM-cluster, geen queue, geen aparte diensten die altijd aan moeten staan. Je start het wanneer je het nodig hebt en sluit het daarna gewoon af.
 
